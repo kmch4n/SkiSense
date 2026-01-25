@@ -1,14 +1,69 @@
 import os
 import cv2
-from centroid_tracker import CentroidTracker
+from deep_sort_realtime.deepsort_tracker import DeepSort
 from noise_filter import filter_noise_rectangles
 import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 import numpy as np
 
-# Setup MediaPipe Pose and drawing utilities
-mp_pose = mp.solutions.pose
-mp_drawing = mp.solutions.drawing_utils
-pose_estimator = mp_pose.Pose(static_image_mode=True, min_detection_confidence=0.1)
+# Setup MediaPipe Pose Landmarker (Tasks API)
+MODEL_PATH = "pose_landmarker.task"
+
+# Download model if not exists
+if not os.path.exists(MODEL_PATH):
+    import urllib.request
+    MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+    print("Downloading pose landmarker model...")
+    urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+    print("Model downloaded successfully.")
+
+# PoseLandmarker configuration
+base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+options = vision.PoseLandmarkerOptions(
+    base_options=base_options,
+    running_mode=vision.RunningMode.IMAGE,
+    min_pose_detection_confidence=0.1,
+    min_pose_presence_confidence=0.5,
+    min_tracking_confidence=0.5,
+    num_poses=1
+)
+pose_landmarker = vision.PoseLandmarker.create_from_options(options)
+
+
+# Pose connections (33 landmarks)
+POSE_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 7), (0, 4), (4, 5), (5, 6), (6, 8),
+    (9, 10), (11, 12), (11, 13), (13, 15), (15, 17), (15, 19), (15, 21),
+    (17, 19), (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20),
+    (11, 23), (12, 24), (23, 24), (23, 25), (24, 26), (25, 27), (26, 28),
+    (27, 29), (28, 30), (29, 31), (30, 32), (27, 31), (28, 32)
+]
+
+
+def draw_landmarks_on_image(rgb_image, detection_result):
+    """Draw pose landmarks on image using OpenCV"""
+    pose_landmarks_list = detection_result.pose_landmarks
+    annotated_image = np.copy(rgb_image)
+    h, w = annotated_image.shape[:2]
+
+    for pose_landmarks in pose_landmarks_list:
+        # Draw connections (green lines)
+        for connection in POSE_CONNECTIONS:
+            start_idx, end_idx = connection
+            if start_idx < len(pose_landmarks) and end_idx < len(pose_landmarks):
+                start = pose_landmarks[start_idx]
+                end = pose_landmarks[end_idx]
+                start_point = (int(start.x * w), int(start.y * h))
+                end_point = (int(end.x * w), int(end.y * h))
+                cv2.line(annotated_image, start_point, end_point, (0, 255, 0), 2)
+
+        # Draw landmarks (red circles)
+        for landmark in pose_landmarks:
+            cx, cy = int(landmark.x * w), int(landmark.y * h)
+            cv2.circle(annotated_image, (cx, cy), 3, (0, 0, 255), -1)
+
+    return annotated_image
 
 # Input video path
 video_path = "video/your_video_file_here.mp4"
@@ -33,7 +88,14 @@ out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
 # Background subtractor and tracker setup
 fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=25, detectShadows=True)
-tracker = CentroidTracker(maxDisappeared=20)
+tracker = DeepSort(
+    max_age=20,
+    n_init=2,
+    nms_max_overlap=1.0,
+    embedder='mobilenet',
+    half=True,
+    bgr=True
+)
 
 # Dictionary to store the last 4 centroids for each tracked object
 object_history = {}
@@ -66,8 +128,22 @@ while True:
     # Filter out detections in the noisy zones
     rects = filter_noise_rectangles(frame, rects, left_ignore_pct=0.2, right_ignore_pct=0.1, top_ignore_pct=0.1)
 
-    # Update tracker with filtered bounding boxes
-    objects = tracker.update(rects)
+    # Deep SORT用フォーマットに変換: ([x, y, w, h], confidence, class)
+    detections = [([x, y, w, h], 1.0, 'person') for (x, y, w, h) in rects]
+
+    # Deep SORTでトラッキング更新
+    tracks = tracker.update_tracks(detections, frame=frame)
+
+    # 確認済みトラックから重心辞書を作成
+    objects = {}
+    for track in tracks:
+        if not track.is_confirmed():
+            continue
+        track_id = track.track_id
+        ltrb = track.to_ltrb()
+        cx = int((ltrb[0] + ltrb[2]) / 2)
+        cy = int((ltrb[1] + ltrb[3]) / 2)
+        objects[track_id] = (cx, cy)
 
     # Process each bounding box for posture detection
     for (x, y, w, h) in rects:
@@ -75,20 +151,20 @@ while True:
         roi = frame[y:y+h, x:x+w]
         # Convert from BGR to RGB for MediaPipe
         roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-        results = pose_estimator.process(roi_rgb)
-        
-        if results.pose_landmarks:
-            # Draw pose landmarks on the ROI
-            mp_drawing.draw_landmarks(
-                roi, 
-                results.pose_landmarks, 
-                mp_pose.POSE_CONNECTIONS,
-                mp_drawing.DrawingSpec(color=(0, 0, 255), thickness=2, circle_radius=2),
-                mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2)
-            )
-            # Place the processed ROI back into the frame
-            frame[y:y+h, x:x+w] = roi
-        
+
+        # Create mp.Image object for Tasks API
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=roi_rgb)
+
+        # Run pose estimation
+        detection_result = pose_landmarker.detect(mp_image)
+
+        if detection_result.pose_landmarks:
+            # Draw landmarks (RGB format)
+            annotated_roi_rgb = draw_landmarks_on_image(roi_rgb, detection_result)
+            # Convert back to BGR and place in frame
+            annotated_roi_bgr = cv2.cvtColor(annotated_roi_rgb, cv2.COLOR_RGB2BGR)
+            frame[y:y+h, x:x+w] = annotated_roi_bgr
+
         # Draw bounding box for visualization (blue)
         cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
@@ -121,5 +197,5 @@ while True:
 
 cap.release()
 out.release()
-pose_estimator.close()
+pose_landmarker.close()
 cv2.destroyAllWindows()

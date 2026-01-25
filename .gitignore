@@ -1,23 +1,41 @@
-# Ignore video files
+# Video files
 video/
 *.mp4
 *.avi
 *.mov
 
-# Ignore Python virtual environment
-venv/
+# Python virtual environment
+.venv/
 .env
+env/
+venv/
 
-# Ignore macOS system files
-.DS_Store
-
-# Ignore compiled Python files
+# Python compiled files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
+dist/
+build/
 
-# Ignore logs and temporary files
+# MediaPipe model files
+*.task
+
+# Logs and temporary files
 logs/
 *.log
 *.tmp
+
+# OS system files
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AI tools
+.claude/
