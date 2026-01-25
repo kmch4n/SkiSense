@@ -1,4 +1,34 @@
+# =============================================================================
+# Configuration
+# =============================================================================
+DEBUG = False       # True: show all logs, False: suppress logs
+SHOW_GUI = False     # True: show preview window, False: headless mode
+DEVICE_PREFERENCE = "auto"  # "auto" | "cuda" | "cpu"
+
+# =============================================================================
+# Suppress warnings when DEBUG is False
+# =============================================================================
 import os
+import warnings
+
+if not DEBUG:
+    # Must be set before importing TensorFlow/MediaPipe
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+    os.environ['GLOG_minloglevel'] = '3'  # Suppress Google logging (used by MediaPipe)
+    os.environ['GRPC_VERBOSITY'] = 'ERROR'
+    warnings.filterwarnings('ignore')
+
+    # Suppress absl logging (used by TensorFlow/MediaPipe)
+    import absl.logging
+    absl.logging.set_verbosity(absl.logging.ERROR)
+    absl.logging.set_stderrthreshold(absl.logging.ERROR)
+
+    import logging
+    logging.getLogger('mediapipe').setLevel(logging.ERROR)
+    logging.getLogger('ultralytics').setLevel(logging.ERROR)
+    logging.getLogger('tensorflow').setLevel(logging.ERROR)
+
 import cv2
 from deep_sort_realtime.deepsort_tracker import DeepSort
 from ultralytics import YOLO
@@ -7,6 +37,33 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import numpy as np
+import sys
+import torch
+import inspect
+
+# Prefer GPU when available
+def resolve_device(preference: str):
+    preference = preference.lower().strip()
+    if preference == "cpu":
+        return torch.device("cpu"), False, "cpu"
+    if preference == "cuda":
+        if torch.cuda.is_available():
+            return torch.device("cuda:0"), True, "cuda"
+        print("Warning: CUDA forced but not available. Falling back to CPU.")
+        return torch.device("cpu"), False, "cpu"
+    if torch.cuda.is_available():
+        return torch.device("cuda:0"), True, "cuda"
+    return torch.device("cpu"), False, "cpu"
+
+
+DEVICE, USE_CUDA, DEVICE_STR = resolve_device(DEVICE_PREFERENCE)
+if USE_CUDA:
+    torch.backends.cudnn.benchmark = True
+    print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
+    print(f"CUDA runtime: {torch.version.cuda}, torch: {torch.__version__}")
+else:
+    print("Using CPU (CUDA not available).")
+    print(f"CUDA runtime: {torch.version.cuda}, torch: {torch.__version__}")
 
 # Setup MediaPipe Pose Landmarker (Tasks API)
 MODEL_PATH = "pose_landmarker.task"
@@ -153,6 +210,8 @@ if not cap.isOpened():
 fps = cap.get(cv2.CAP_PROP_FPS)
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+current_frame = 0
 
 # Define output filename: same as input with '_pose' appended before the extension
 base_name = os.path.splitext(os.path.basename(video_path))[0]
@@ -165,24 +224,49 @@ out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
 # YOLO model for person detection
 yolo_model = YOLO('yolov8x.pt')  # extra large version (highest accuracy)
+if USE_CUDA:
+    yolo_model.to(DEVICE)
 
 # Tracker setup
-tracker = DeepSort(
-    max_age=20,
-    n_init=2,
-    nms_max_overlap=1.0,
-    embedder='mobilenet',
-    half=True,
-    bgr=True
-)
+tracker_kwargs = {
+    "max_age": 20,
+    "n_init": 2,
+    "nms_max_overlap": 1.0,
+    "embedder": "mobilenet",
+    "half": USE_CUDA,
+    "bgr": True
+}
+if "embedder_gpu" in inspect.signature(DeepSort).parameters:
+    tracker_kwargs["embedder_gpu"] = USE_CUDA
+tracker = DeepSort(**tracker_kwargs)
+
+print(f"Processing video: {video_path}")
+print(f"Total frames: {total_frames}, FPS: {fps:.1f}")
+print(f"Output: {output_path}")
+print("-" * 50)
 
 while True:
     ret, frame = cap.read()
     if not ret:
         break
 
+    current_frame += 1
+
+    # Show progress
+    if current_frame % 30 == 0 or current_frame == total_frames:
+        progress = (current_frame / total_frames) * 100
+        sys.stdout.write(f"\rProcessing: {current_frame}/{total_frames} ({progress:.1f}%)")
+        sys.stdout.flush()
+
     # YOLO person detection
-    results = yolo_model(frame, classes=[0], conf=0.5, verbose=False)  # class 0 = person
+    results = yolo_model(
+        frame,
+        classes=[0],
+        conf=0.5,
+        verbose=DEBUG,
+        device=0 if USE_CUDA else "cpu",
+        half=USE_CUDA
+    )  # class 0 = person
     rects = []
     for result in results:
         for box in result.boxes:
@@ -239,14 +323,22 @@ while True:
     # Draw pose analysis info panel
     draw_info_panel(frame, latest_pose_analysis)
 
-    # Show the frame and write it to the output video
-    cv2.imshow("Ski Video - Pose & Tracking", frame)
+    # Write frame to output video
     out.write(frame)
-    
-    if cv2.waitKey(25) & 0xFF == ord('q'):
-        break
+
+    # Show preview window if GUI is enabled
+    if SHOW_GUI:
+        cv2.imshow("Ski Video - Pose & Tracking", frame)
+        if cv2.waitKey(25) & 0xFF == ord('q'):
+            print("\n\nProcessing cancelled by user.")
+            break
+
+# Cleanup
+print(f"\n\nProcessing complete!")
+print(f"Output saved to: {output_path}")
 
 cap.release()
 out.release()
 pose_landmarker.close()
-cv2.destroyAllWindows()
+if SHOW_GUI:
+    cv2.destroyAllWindows()

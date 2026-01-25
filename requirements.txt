@@ -1,8 +1,9 @@
-opencv-python>=4.5.1.48
-numpy>=1.18.0
-mediapipe>=0.10.30
+opencv-python>=4.7.0.68
+numpy>=1.23.5
+mediapipe>=0.10.14
 deep_sort_realtime>=1.4.4
-torch>=2.0.0
-torchvision>=0.15.0
+torch>=2.1.0
+torchvision>=0.16.0
 setuptools>=75.8.2
 ultralytics>=8.0.0
+absl-py>=1.4.0
