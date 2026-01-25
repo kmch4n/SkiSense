@@ -2,6 +2,7 @@ import os
 import cv2
 from deep_sort_realtime.deepsort_tracker import DeepSort
 from noise_filter import filter_noise_rectangles
+from pose_analyzer import analyze_ski_pose, COLORS
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -65,6 +66,82 @@ def draw_landmarks_on_image(rgb_image, detection_result):
 
     return annotated_image
 
+
+# Store latest pose analysis results for display
+latest_pose_analysis = None
+
+
+def draw_info_panel(frame, analysis):
+    """Draw pose analysis info panel on top-left of frame"""
+    if analysis is None:
+        return
+
+    angles = analysis['angles']
+    evals = analysis['evaluations']
+    score = analysis['score']
+
+    # Panel settings
+    panel_x = 10
+    panel_y = 10
+    line_height = 25
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    thickness = 2
+
+    # Draw semi-transparent background
+    panel_height = line_height * 10 + 20
+    panel_width = 280
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (panel_x, panel_y),
+                  (panel_x + panel_width, panel_y + panel_height),
+                  (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+
+    # Title
+    y_pos = panel_y + line_height
+    cv2.putText(frame, "Pose Analysis", (panel_x + 10, y_pos),
+                font, 0.7, (255, 255, 255), thickness)
+
+    # Knee angles
+    y_pos += line_height
+    color = COLORS[evals['left_knee']['status']]
+    cv2.putText(frame, f"L Knee: {angles['left_knee']:.0f}",
+                (panel_x + 10, y_pos), font, font_scale, color, thickness)
+    color = COLORS[evals['right_knee']['status']]
+    cv2.putText(frame, f"R Knee: {angles['right_knee']:.0f}",
+                (panel_x + 150, y_pos), font, font_scale, color, thickness)
+
+    # Hip angles
+    y_pos += line_height
+    color = COLORS[evals['left_hip']['status']]
+    cv2.putText(frame, f"L Hip: {angles['left_hip']:.0f}",
+                (panel_x + 10, y_pos), font, font_scale, color, thickness)
+    color = COLORS[evals['right_hip']['status']]
+    cv2.putText(frame, f"R Hip: {angles['right_hip']:.0f}",
+                (panel_x + 150, y_pos), font, font_scale, color, thickness)
+
+    # Shoulder tilt
+    y_pos += line_height
+    color = COLORS[evals['shoulder_tilt']['status']]
+    cv2.putText(frame, f"Shoulder Tilt: {angles['shoulder_tilt']:.1f}",
+                (panel_x + 10, y_pos), font, font_scale, color, thickness)
+
+    # Ankle angles
+    y_pos += line_height
+    color = COLORS[evals['left_ankle']['status']]
+    cv2.putText(frame, f"L Ankle: {angles['left_ankle']:.0f}",
+                (panel_x + 10, y_pos), font, font_scale, color, thickness)
+    color = COLORS[evals['right_ankle']['status']]
+    cv2.putText(frame, f"R Ankle: {angles['right_ankle']:.0f}",
+                (panel_x + 150, y_pos), font, font_scale, color, thickness)
+
+    # Score
+    y_pos += line_height + 10
+    score_color = COLORS['good'] if score >= 70 else (COLORS['warning'] if score >= 40 else COLORS['bad'])
+    cv2.putText(frame, f"Score: {score}/100",
+                (panel_x + 10, y_pos), font, 0.8, score_color, thickness)
+
+
 # Input video path
 video_path = "video/your_video_file_here.mp4"
 cap = cv2.VideoCapture(video_path)
@@ -96,13 +173,6 @@ tracker = DeepSort(
     half=True,
     bgr=True
 )
-
-# Dictionary to store the last 4 centroids for each tracked object
-object_history = {}
-
-# Parameters for arrow drawing
-arrow_scale = 5         # Scale factor for arrow length
-max_displacement = 100  # Maximum displacement (in pixels) allowed to draw arrow
 
 while True:
     ret, frame = cap.read()
@@ -165,29 +235,18 @@ while True:
             annotated_roi_bgr = cv2.cvtColor(annotated_roi_rgb, cv2.COLOR_RGB2BGR)
             frame[y:y+h, x:x+w] = annotated_roi_bgr
 
+            # Analyze ski pose
+            roi_h, roi_w = roi_rgb.shape[:2]
+            analysis = analyze_ski_pose(detection_result.pose_landmarks[0], roi_w, roi_h)
+            if analysis:
+                latest_pose_analysis = analysis
+
         # Draw bounding box for visualization (blue)
         cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
-    # For each tracked object, update its history and draw the smoothed arrow
-    for objectID, centroid in objects.items():
-        # Initialize history list if necessary
-        if objectID not in object_history:
-            object_history[objectID] = []
-        # Append the current centroid and keep only the last 4 positions
-        object_history[objectID].append(centroid)
-        if len(object_history[objectID]) > 4:
-            object_history[objectID].pop(0)
-        
-        # Only draw arrow if we have at least 4 frames of history
-        if len(object_history[objectID]) >= 4:
-            old = object_history[objectID][0]
-            dx = centroid[0] - old[0]
-            dy = centroid[1] - old[1]
-            displacement = np.sqrt(dx**2 + dy**2)
-            if displacement > 0 and displacement < max_displacement:
-                arrow_end = (int(centroid[0] + arrow_scale * dx), int(centroid[1] + arrow_scale * dy))
-                cv2.arrowedLine(frame, (centroid[0], centroid[1]), arrow_end, (0, 255, 255), 2, tipLength=0.3)
-    
+    # Draw pose analysis info panel
+    draw_info_panel(frame, latest_pose_analysis)
+
     # Show the frame and write it to the output video
     cv2.imshow("Ski Video - Pose & Tracking", frame)
     out.write(frame)
