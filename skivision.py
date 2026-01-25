@@ -1,7 +1,7 @@
 import os
 import cv2
 from deep_sort_realtime.deepsort_tracker import DeepSort
-from noise_filter import filter_noise_rectangles
+from ultralytics import YOLO
 from pose_analyzer import analyze_ski_pose, COLORS
 import mediapipe as mp
 from mediapipe.tasks import python
@@ -163,8 +163,10 @@ output_path = os.path.join(os.path.dirname(video_path), output_filename)
 fourcc = cv2.VideoWriter_fourcc(*'mp4v')
 out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-# Background subtractor and tracker setup
-fgbg = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=25, detectShadows=True)
+# YOLO model for person detection
+yolo_model = YOLO('yolov8x.pt')  # extra large version (highest accuracy)
+
+# Tracker setup
 tracker = DeepSort(
     max_age=20,
     n_init=2,
@@ -179,24 +181,14 @@ while True:
     if not ret:
         break
 
-    # Create foreground mask and reduce noise with morphological operations
-    fgmask = fgbg.apply(frame)
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    fgmask = cv2.morphologyEx(fgmask, cv2.MORPH_OPEN, kernel)
-
-    # Find contours on the mask
-    contours, _ = cv2.findContours(fgmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    # YOLO person detection
+    results = yolo_model(frame, classes=[0], conf=0.5, verbose=False)  # class 0 = person
     rects = []
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area > 500:
-            x, y, w, h = cv2.boundingRect(contour)
-            if w < 30 or h < 50:
-                continue
-            rects.append((x, y, w, h))
-
-    # Filter out detections in the noisy zones
-    rects = filter_noise_rectangles(frame, rects, left_ignore_pct=0.2, right_ignore_pct=0.1, top_ignore_pct=0.1)
+    for result in results:
+        for box in result.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+            w, h = x2 - x1, y2 - y1
+            rects.append((x1, y1, w, h))
 
     # Deep SORT用フォーマットに変換: ([x, y, w, h], confidence, class)
     detections = [([x, y, w, h], 1.0, 'person') for (x, y, w, h) in rects]

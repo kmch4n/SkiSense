@@ -5,3 +5,4 @@ deep_sort_realtime>=1.4.4
 torch>=2.0.0
 torchvision>=0.15.0
 setuptools>=75.8.2
+ultralytics>=8.0.0
