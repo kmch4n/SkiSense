@@ -1,1 +1,1 @@
-"""SkiVision source package."""
+"""SkiSense source package."""

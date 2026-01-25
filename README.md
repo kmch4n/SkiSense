@@ -1,56 +1,82 @@
-# SkiVision 🎿👀  
-**Tracking skiers with computer vision using OpenCV and MediaPipe**  
+# SkiSense
 
+Ski pose analysis tool using computer vision and deep learning.
 
-![SkiVision preview](images/skier.png)
-Skier 42 posture and direction.
+![SkiSense preview](images/skier.gif)
 
-## 📌 Overview  
-SkiVision is a computer vision project that detects and tracks skiers in a video using object tracking and posture estimation. It provides:  
-- **Object tracking:** Using CentroidTracker  
-- **Posture estimation:** Using MediaPipe Pose  
-- **Direction & speed visualization:** Arrows indicating movement over multiple frames  
-- **Noise filtering:** Removes detections in unwanted areas  
+## Overview
 
----
+SkiSense analyzes ski videos to detect and evaluate skiing posture in real-time. It provides:
 
-## 🛠️ Installation  
-Ensure you are using a Python virtual environment. Run:  
+- **Person Detection:** YOLOv8x for accurate skier detection
+- **Pose Estimation:** MediaPipe Pose Landmarker for joint tracking
+- **Pose Analysis:** Real-time evaluation of knee, hip, ankle angles and shoulder tilt
+- **Score Display:** Overall posture score (0-100)
+- **Object Tracking:** Deep SORT for consistent tracking across frames
 
-```sh
-python3 -m venv venv
-source venv/bin/activate  # On macOS/Linux
-venv\Scripts\activate  # On Windows
+## Installation
+
+```bash
+# Create virtual environment
+python -m venv .venv
+
+# Activate (Windows)
+.venv\Scripts\activate
+
+# Activate (macOS/Linux)
+source .venv/bin/activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
----
+## Usage
 
-## 🎥 Usage  
-### **Run tracking & posture estimation with CentroidTracker**  
-```sh
-python skivision.py
+```bash
+# Process default video (input/video.mp4)
+python run.py
+
+# Process specific video
+python run.py my_ski_video.mp4
 ```
 
+- Place input videos in `input/` directory
+- Output videos are saved in `output/` as `{filename}_pose.mp4`
 
-Both scripts will process the video and output a new version with tracking, posture estimation, and movement visualization.
+## Configuration
 
----
+Edit `src/skisense/config.py` to customize settings:
 
-## 🎯 Features  
-✔ **Real-time object tracking**  
-✔ **Posture estimation with MediaPipe**  
-✔ **Direction & speed visualization with arrows**  
-✔ **Noise filtering to remove false detections**  
+```python
+DEBUG = False           # Show debug logs
+SHOW_GUI = False        # Show preview window during processing
+DEVICE_PREFERENCE = "auto"  # "auto" | "cuda" | "cpu"
+```
 
----
+## Project Structure
 
-## 📌 Notes  
-- Place your input videos in the `video/` folder before running scripts.  
-- The output videos will be saved in the same folder with `_pose`  added to the filename.    
+```
+SkiSense/
+├── src/skisense/      # Source code
+│   ├── main.py         # Main processing
+│   ├── pose_analyzer.py # Pose analysis
+│   └── config.py       # Configuration
+├── models/             # Model files (auto-downloaded)
+├── input/              # Input videos
+├── output/             # Output videos
+├── run.py              # Entry point
+└── requirements.txt
+```
 
----
+## Requirements
 
-## 🏔️ Author  
-Simen Huuse - Created for skier tracking experiments.  
-Feel free to contribute and improve the project! 🚀  
+- Python 3.10+
+- CUDA-capable GPU (recommended for real-time processing)
+
+## Tech Stack
+
+- [YOLOv8](https://github.com/ultralytics/ultralytics) - Person detection
+- [MediaPipe](https://developers.google.com/mediapipe) - Pose estimation
+- [Deep SORT](https://github.com/nwojke/deep_sort) - Object tracking
+- [OpenCV](https://opencv.org/) - Video processing
+- [PyTorch](https://pytorch.org/) - Deep learning backend
