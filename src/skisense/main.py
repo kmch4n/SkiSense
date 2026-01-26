@@ -8,8 +8,12 @@ Analyzes ski videos to detect and evaluate skiing posture.
 from .config import (
     DEBUG, SHOW_GUI, DEVICE_PREFERENCE,
     MODEL_DIR, INPUT_DIR, OUTPUT_DIR,
-    YOLO_MODEL, POSE_MODEL, POSE_MODEL_URL
+    YOLO_MODEL, POSE_MODEL, POSE_MODEL_URL,
+    ZOOM_ENABLED, ZOOM_SCALE, ZOOM_SMOOTHING, ZOOM_PADDING,
+    YOLO_CONFIDENCE, DEEPSORT_MAX_AGE, DEEPSORT_N_INIT,
+    POSE_PRESENCE_CONF, POSE_TRACKING_CONF
 )
+from .zoom_tracker import ZoomTracker
 
 # =============================================================================
 # Suppress warnings when DEBUG is False
@@ -76,33 +80,114 @@ def resolve_device(preference: str):
     return torch.device("cpu"), False, "cpu"
 
 
-def draw_landmarks_on_image(rgb_image, detection_result):
-    """Draw pose landmarks on image using OpenCV."""
-    pose_landmarks_list = detection_result.pose_landmarks
-    annotated_image = np.copy(rgb_image)
-    h, w = annotated_image.shape[:2]
+def transform_point_to_zoom(point, bbox, zoom_info):
+    """Transform a point from ROI coordinates to zoomed frame coordinates.
 
-    for pose_landmarks in pose_landmarks_list:
-        # Draw connections (green lines)
-        for connection in POSE_CONNECTIONS:
-            start_idx, end_idx = connection
-            if start_idx < len(pose_landmarks) and end_idx < len(pose_landmarks):
-                start = pose_landmarks[start_idx]
-                end = pose_landmarks[end_idx]
-                start_point = (int(start.x * w), int(start.y * h))
-                end_point = (int(end.x * w), int(end.y * h))
-                cv2.line(annotated_image, start_point, end_point, (0, 255, 0), 2)
+    Args:
+        point: (x, y) in ROI coordinates
+        bbox: (x, y, w, h) bounding box in original frame
+        zoom_info: dict with 'crop' key containing (x1, y1, x2, y2)
 
-        # Draw landmarks (red circles)
-        for landmark in pose_landmarks:
-            cx, cy = int(landmark.x * w), int(landmark.y * h)
-            cv2.circle(annotated_image, (cx, cy), 3, (0, 0, 255), -1)
+    Returns:
+        (x, y) in zoomed frame coordinates, or None if outside zoom region
+    """
+    if zoom_info is None:
+        # No zoom: ROI coords + bbox offset
+        x, y, w, h = bbox
+        return (point[0] + x, point[1] + y)
 
-    return annotated_image
+    # ROI coordinates -> Frame coordinates
+    bx, by, bw, bh = bbox
+    frame_x = bx + point[0]
+    frame_y = by + point[1]
+
+    # Frame coordinates -> Zoom coordinates
+    x1, y1, x2, y2 = zoom_info['crop']
+    crop_w = x2 - x1
+    crop_h = y2 - y1
+
+    if crop_w == 0 or crop_h == 0:
+        return None
+
+    # Get frame dimensions from zoom_info (inferred from scale)
+    # The zoomed frame is resized back to original dimensions
+    # So we need to map: (frame_x, frame_y) -> position in (x1, y1, x2, y2) -> (0, w) x (0, h)
+    zoom_x = (frame_x - x1) / crop_w
+    zoom_y = (frame_y - y1) / crop_h
+
+    # Clamp to frame boundaries (always return valid coordinates)
+    # This allows skeleton lines to be drawn even if endpoints are outside zoom region
+    zoom_x = max(0, min(1, zoom_x))
+    zoom_y = max(0, min(1, zoom_y))
+    return (zoom_x, zoom_y)
+
+
+def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info):
+    """Draw pose landmarks on zoomed frame.
+
+    Args:
+        frame: Zoomed frame (will be modified in-place)
+        landmarks: MediaPipe pose landmarks
+        bbox: (x, y, w, h) bounding box in original frame
+        zoom_info: dict with zoom information
+    """
+    h, w = frame.shape[:2]
+    bx, by, bw, bh = bbox
+
+    # Transform and draw connections
+    for connection in POSE_CONNECTIONS:
+        start_idx, end_idx = connection
+        if start_idx < len(landmarks) and end_idx < len(landmarks):
+            start_lm = landmarks[start_idx]
+            end_lm = landmarks[end_idx]
+
+            # Get ROI coordinates
+            start_roi = (start_lm.x * bw, start_lm.y * bh)
+            end_roi = (end_lm.x * bw, end_lm.y * bh)
+
+            # Transform to zoom coordinates
+            start_zoom = transform_point_to_zoom(start_roi, bbox, zoom_info)
+            end_zoom = transform_point_to_zoom(end_roi, bbox, zoom_info)
+
+            if start_zoom and end_zoom:
+                start_point = (int(start_zoom[0] * w), int(start_zoom[1] * h))
+                end_point = (int(end_zoom[0] * w), int(end_zoom[1] * h))
+                cv2.line(frame, start_point, end_point, (0, 255, 0), 2)
+
+    # Draw landmarks
+    for landmark in landmarks:
+        roi_point = (landmark.x * bw, landmark.y * bh)
+        zoom_point = transform_point_to_zoom(roi_point, bbox, zoom_info)
+
+        if zoom_point:
+            px = int(zoom_point[0] * w)
+            py = int(zoom_point[1] * h)
+            cv2.circle(frame, (px, py), 3, (0, 0, 255), -1)
+
+
+def draw_bbox_on_zoomed_frame(frame, bbox, zoom_info):
+    """Draw bounding box on zoomed frame.
+
+    Args:
+        frame: Zoomed frame (will be modified in-place)
+        bbox: (x, y, w, h) bounding box in original frame
+        zoom_info: dict with zoom information
+    """
+    h, w = frame.shape[:2]
+    x, y, bw, bh = bbox
+
+    # Transform bbox corners
+    tl = transform_point_to_zoom((0, 0), bbox, zoom_info)
+    br = transform_point_to_zoom((bw, bh), bbox, zoom_info)
+
+    if tl and br:
+        pt1 = (int(tl[0] * w), int(tl[1] * h))
+        pt2 = (int(br[0] * w), int(br[1] * h))
+        cv2.rectangle(frame, pt1, pt2, (255, 0, 0), 2)
 
 
 def draw_info_panel(frame, analysis):
-    """Draw pose analysis info panel on top-left of frame."""
+    """Draw pose analysis info panel on top-left of frame with adaptive scaling."""
     if analysis is None:
         return
 
@@ -110,66 +195,77 @@ def draw_info_panel(frame, analysis):
     evals = analysis['evaluations']
     score = analysis['score']
 
-    # Panel settings
-    panel_x = 10
-    panel_y = 10
-    line_height = 25
+    # Get frame dimensions
+    h, w = frame.shape[:2]
+
+    # Adaptive scaling based on frame width
+    # Base resolution: 1280px (720p standard)
+    scale_factor = w / 1280.0
+
+    # Panel settings (scaled)
+    panel_x = int(10 * scale_factor)
+    panel_y = int(10 * scale_factor)
+    line_height = int(25 * scale_factor)
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.6
-    thickness = 2
+    font_scale = 0.6 * scale_factor
+    thickness = max(1, int(2 * scale_factor))
 
     # Draw semi-transparent background
-    panel_height = line_height * 10 + 20
-    panel_width = 280
+    panel_height = line_height * 10 + int(20 * scale_factor)
+    panel_width = int(280 * scale_factor)
     overlay = frame.copy()
     cv2.rectangle(overlay, (panel_x, panel_y),
                   (panel_x + panel_width, panel_y + panel_height),
                   (0, 0, 0), -1)
     cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
 
+    # Scaled text offsets
+    text_padding = int(10 * scale_factor)
+    column2_offset = int(150 * scale_factor)
+
     # Title
     y_pos = panel_y + line_height
-    cv2.putText(frame, "Pose Analysis", (panel_x + 10, y_pos),
-                font, 0.7, (255, 255, 255), thickness)
+    cv2.putText(frame, "Pose Analysis", (panel_x + text_padding, y_pos),
+                font, 0.7 * scale_factor, (255, 255, 255), thickness)
 
     # Knee angles
     y_pos += line_height
     color = COLORS[evals['left_knee']['status']]
     cv2.putText(frame, f"L Knee: {angles['left_knee']:.0f}",
-                (panel_x + 10, y_pos), font, font_scale, color, thickness)
+                (panel_x + text_padding, y_pos), font, font_scale, color, thickness)
     color = COLORS[evals['right_knee']['status']]
     cv2.putText(frame, f"R Knee: {angles['right_knee']:.0f}",
-                (panel_x + 150, y_pos), font, font_scale, color, thickness)
+                (panel_x + column2_offset, y_pos), font, font_scale, color, thickness)
 
     # Hip angles
     y_pos += line_height
     color = COLORS[evals['left_hip']['status']]
     cv2.putText(frame, f"L Hip: {angles['left_hip']:.0f}",
-                (panel_x + 10, y_pos), font, font_scale, color, thickness)
+                (panel_x + text_padding, y_pos), font, font_scale, color, thickness)
     color = COLORS[evals['right_hip']['status']]
     cv2.putText(frame, f"R Hip: {angles['right_hip']:.0f}",
-                (panel_x + 150, y_pos), font, font_scale, color, thickness)
+                (panel_x + column2_offset, y_pos), font, font_scale, color, thickness)
 
     # Shoulder tilt
     y_pos += line_height
     color = COLORS[evals['shoulder_tilt']['status']]
     cv2.putText(frame, f"Shoulder Tilt: {angles['shoulder_tilt']:.1f}",
-                (panel_x + 10, y_pos), font, font_scale, color, thickness)
+                (panel_x + text_padding, y_pos), font, font_scale, color, thickness)
 
     # Ankle angles
     y_pos += line_height
     color = COLORS[evals['left_ankle']['status']]
     cv2.putText(frame, f"L Ankle: {angles['left_ankle']:.0f}",
-                (panel_x + 10, y_pos), font, font_scale, color, thickness)
+                (panel_x + text_padding, y_pos), font, font_scale, color, thickness)
     color = COLORS[evals['right_ankle']['status']]
     cv2.putText(frame, f"R Ankle: {angles['right_ankle']:.0f}",
-                (panel_x + 150, y_pos), font, font_scale, color, thickness)
+                (panel_x + column2_offset, y_pos), font, font_scale, color, thickness)
 
     # Score
-    y_pos += line_height + 10
+    y_pos += line_height + text_padding
     score_color = COLORS['good'] if score >= 70 else (COLORS['warning'] if score >= 40 else COLORS['bad'])
     cv2.putText(frame, f"Score: {score}/100",
-                (panel_x + 10, y_pos), font, 0.8, score_color, thickness)
+                (panel_x + text_padding, y_pos), font, 0.8 * scale_factor, score_color, thickness)
 
 
 def main(video_file: str = None):
@@ -215,8 +311,8 @@ def main(video_file: str = None):
         base_options=base_options,
         running_mode=vision.RunningMode.IMAGE,
         min_pose_detection_confidence=0.1,
-        min_pose_presence_confidence=0.5,
-        min_tracking_confidence=0.5,
+        min_pose_presence_confidence=POSE_PRESENCE_CONF,
+        min_tracking_confidence=POSE_TRACKING_CONF,
         num_poses=1
     )
     pose_landmarker = vision.PoseLandmarker.create_from_options(options)
@@ -247,6 +343,17 @@ def main(video_file: str = None):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
+    # Initialize ZoomTracker if enabled
+    zoom_tracker = None
+    if ZOOM_ENABLED:
+        zoom_tracker = ZoomTracker(
+            frame_width=width,
+            frame_height=height,
+            zoom_scale=ZOOM_SCALE,
+            smoothing=ZOOM_SMOOTHING,
+            padding=ZOOM_PADDING
+        )
+
     # YOLO model for person detection
     yolo_model_path = os.path.join(MODEL_DIR, YOLO_MODEL)
     yolo_model = YOLO(yolo_model_path)
@@ -255,8 +362,8 @@ def main(video_file: str = None):
 
     # Tracker setup
     tracker_kwargs = {
-        "max_age": 20,
-        "n_init": 2,
+        "max_age": DEEPSORT_MAX_AGE,
+        "n_init": DEEPSORT_N_INIT,
         "nms_max_overlap": 1.0,
         "embedder": "mobilenet",
         "half": USE_CUDA,
@@ -272,6 +379,10 @@ def main(video_file: str = None):
     print(f"Processing video: {video_path}")
     print(f"Total frames: {total_frames}, FPS: {fps:.1f}")
     print(f"Output: {output_path}")
+    if zoom_tracker is not None:
+        print(f"Zoom tracking: enabled (scale: {ZOOM_SCALE}x)")
+    else:
+        print("Zoom tracking: disabled")
     print("-" * 50)
 
     while True:
@@ -291,7 +402,7 @@ def main(video_file: str = None):
         results = yolo_model(
             frame,
             classes=[0],
-            conf=0.5,
+            conf=YOLO_CONFIDENCE,
             verbose=DEBUG,
             device=0 if USE_CUDA else "cpu",
             half=USE_CUDA
@@ -320,7 +431,8 @@ def main(video_file: str = None):
             cy = int((ltrb[1] + ltrb[3]) / 2)
             objects[track_id] = (cx, cy)
 
-        # Process each bounding box for posture detection
+        # Step 1: Pose estimation only (no drawing)
+        landmarks_data = []
         for (x, y, w, h) in rects:
             # Crop the region of interest (ROI)
             roi = frame[y:y+h, x:x+w]
@@ -334,30 +446,47 @@ def main(video_file: str = None):
             detection_result = pose_landmarker.detect(mp_image)
 
             if detection_result.pose_landmarks:
-                # Draw landmarks (RGB format)
-                annotated_roi_rgb = draw_landmarks_on_image(roi_rgb, detection_result)
-                # Convert back to BGR and place in frame
-                annotated_roi_bgr = cv2.cvtColor(annotated_roi_rgb, cv2.COLOR_RGB2BGR)
-                frame[y:y+h, x:x+w] = annotated_roi_bgr
-
                 # Analyze ski pose
                 roi_h, roi_w = roi_rgb.shape[:2]
                 analysis = analyze_ski_pose(detection_result.pose_landmarks[0], roi_w, roi_h)
                 if analysis:
                     latest_pose_analysis = analysis
 
-            # Draw bounding box for visualization (blue)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                    # Store landmarks and metadata for later drawing
+                    landmarks_data.append({
+                        'landmarks': detection_result.pose_landmarks[0],
+                        'bbox': (x, y, w, h),
+                        'shoulder_center': analysis.get('shoulder_center')
+                    })
 
-        # Draw pose analysis info panel
-        draw_info_panel(frame, latest_pose_analysis)
+        # Step 2: Apply zoom tracking if enabled
+        output_frame = frame.copy()
+        zoom_info = None
+        if zoom_tracker is not None:
+            # Use shoulder center from first detected person
+            shoulder_center = landmarks_data[0]['shoulder_center'] if landmarks_data else None
+            output_frame, zoom_info = zoom_tracker.process_frame(
+                frame, tracks, rects, shoulder_center
+            )
+
+        # Step 3: Draw on zoomed frame
+        for data in landmarks_data:
+            # Draw landmarks
+            draw_landmarks_on_zoomed_frame(
+                output_frame, data['landmarks'], data['bbox'], zoom_info
+            )
+            # Draw bounding box
+            draw_bbox_on_zoomed_frame(output_frame, data['bbox'], zoom_info)
+
+        # Draw pose analysis info panel (on zoomed frame)
+        draw_info_panel(output_frame, latest_pose_analysis)
 
         # Write frame to output video
-        out.write(frame)
+        out.write(output_frame)
 
         # Show preview window if GUI is enabled
         if SHOW_GUI:
-            cv2.imshow("Ski Video - Pose & Tracking", frame)
+            cv2.imshow("Ski Video - Pose & Tracking", output_frame)
             if cv2.waitKey(25) & 0xFF == ord('q'):
                 print("\n\nProcessing cancelled by user.")
                 break

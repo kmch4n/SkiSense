@@ -247,6 +247,13 @@ def analyze_ski_pose(landmarks, width, height):
         results['evaluations'] = evaluations
         results['score'] = int(score_total / score_count) if score_count > 0 else 0
 
+        # Calculate shoulder center (for zoom centering)
+        shoulder_center = (
+            (left_shoulder[0] + right_shoulder[0]) / 2,
+            (left_shoulder[1] + right_shoulder[1]) / 2
+        )
+        results['shoulder_center'] = shoulder_center
+
     except Exception as e:
         return None
 

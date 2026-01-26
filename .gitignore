@@ -47,3 +47,6 @@ Thumbs.db
 # AI tools
 .claude/
 .codex/
+
+# private
+notes/
