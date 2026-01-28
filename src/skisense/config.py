@@ -90,6 +90,7 @@ DEEPSORT_MAX_AGE = _get_int('SKISENSE_DEEPSORT_MAX_AGE', 30, min_val=1)         
 DEEPSORT_N_INIT = _get_int('SKISENSE_DEEPSORT_N_INIT', 1, min_val=1)           # Frames required to confirm new track
 POSE_PRESENCE_CONF = _get_float('SKISENSE_POSE_PRESENCE_CONF', 0.3, min_val=0.0, max_val=1.0)      # MediaPipe pose presence confidence
 POSE_TRACKING_CONF = _get_float('SKISENSE_POSE_TRACKING_CONF', 0.3, min_val=0.0, max_val=1.0)      # MediaPipe pose tracking confidence
+POSE_DETECTION_CONFIDENCE = _get_float('SKISENSE_POSE_DETECTION_CONFIDENCE', 0.5, min_val=0.0, max_val=1.0)  # MediaPipe pose detection confidence
 
 # =============================================================================
 # Model Settings
@@ -97,8 +98,16 @@ POSE_TRACKING_CONF = _get_float('SKISENSE_POSE_TRACKING_CONF', 0.3, min_val=0.0,
 YOLO_MODEL = "yolov8x.pt"           # YOLOv8 model file
 POSE_MODEL = "pose_landmarker.task"  # MediaPipe pose landmarker model
 
-# Model download URL (if not exists)
-POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+# MediaPipe Pose model type selection
+POSE_MODEL_TYPE = _get_str('SKISENSE_POSE_MODEL_TYPE', 'full',
+                            valid_options=['lite', 'full', 'heavy'])  # lite: fast/low accuracy, full: balanced, heavy: slow/high accuracy
+
+# Model download URL (dynamically generated based on POSE_MODEL_TYPE)
+POSE_MODEL_URL = (
+    f"https://storage.googleapis.com/mediapipe-models/"
+    f"pose_landmarker/pose_landmarker_{POSE_MODEL_TYPE}/float16/latest/"
+    f"pose_landmarker_{POSE_MODEL_TYPE}.task"
+)
 
 # =============================================================================
 # Zoom Settings (Center Tracking)

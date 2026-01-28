@@ -11,7 +11,7 @@ from .config import (
     YOLO_MODEL, POSE_MODEL, POSE_MODEL_URL,
     ZOOM_ENABLED, ZOOM_SCALE, ZOOM_SMOOTHING, ZOOM_PADDING,
     YOLO_CONFIDENCE, DEEPSORT_MAX_AGE, DEEPSORT_N_INIT,
-    POSE_PRESENCE_CONF, POSE_TRACKING_CONF
+    POSE_PRESENCE_CONF, POSE_TRACKING_CONF, POSE_DETECTION_CONFIDENCE
 )
 from .zoom_tracker import ZoomTracker
 
@@ -431,7 +431,7 @@ def main(video_file: str = None, high_precision: bool = False):
     options = vision.PoseLandmarkerOptions(
         base_options=base_options,
         running_mode=vision.RunningMode.IMAGE,
-        min_pose_detection_confidence=0.1,
+        min_pose_detection_confidence=POSE_DETECTION_CONFIDENCE,
         min_pose_presence_confidence=POSE_PRESENCE_CONF,
         min_tracking_confidence=POSE_TRACKING_CONF,
         num_poses=1
@@ -643,13 +643,16 @@ def main(video_file: str = None, high_precision: bool = False):
             }
 
         # Step 3: Draw on zoomed frame
+
+        # Draw bounding boxes for ALL detections (YOLO + Deep SORT)
+        for (x, y, w, h) in rects:
+            draw_bbox_on_zoomed_frame(output_frame, (x, y, w, h), zoom_info)
+
+        # Draw pose landmarks ONLY for successful MediaPipe detections
         for data in landmarks_data:
-            # Draw landmarks
             draw_landmarks_on_zoomed_frame(
                 output_frame, data['landmarks'], data['bbox'], zoom_info
             )
-            # Draw bounding box
-            draw_bbox_on_zoomed_frame(output_frame, data['bbox'], zoom_info)
 
         # Draw pose analysis info panel (on zoomed frame)
         draw_info_panel(output_frame, latest_pose_analysis)

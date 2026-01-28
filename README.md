@@ -174,6 +174,8 @@ SKISENSE_POSE_PRESENCE_CONF=0.5
 | `SKISENSE_SHOW_GUI` | false | Show preview window during processing |
 | `SKISENSE_DEVICE` | auto | Device preference: auto, mps, cuda, cpu |
 | `SKISENSE_YOLO_CONFIDENCE` | 0.3 | Detection confidence (0.0-1.0) |
+| `SKISENSE_POSE_MODEL_TYPE` | full | Pose model: lite, full, heavy |
+| `SKISENSE_POSE_DETECTION_CONFIDENCE` | 0.5 | Pose detection confidence (0.0-1.0) |
 | `SKISENSE_ZOOM_ENABLED` | true | Enable automatic zoom tracking |
 | `SKISENSE_ZOOM_SCALE` | 1.2 | Zoom magnification (1.0-5.0) |
 
