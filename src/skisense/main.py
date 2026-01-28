@@ -122,17 +122,59 @@ POSE_CONNECTIONS = [
 
 
 def resolve_device(preference: str):
-    """Resolve device preference to actual device."""
+    """Resolve device preference to actual device.
+
+    Returns:
+        tuple: (torch.device, bool, str)
+            - device: PyTorch device object
+            - use_gpu: True if GPU (CUDA/MPS) is available
+            - device_str: "cuda" | "mps" | "cpu"
+    """
     preference = preference.lower().strip()
+
+    # CPU強制
     if preference == "cpu":
         return torch.device("cpu"), False, "cpu"
+
+    # CUDA強制
     if preference == "cuda":
         if torch.cuda.is_available():
             return torch.device("cuda:0"), True, "cuda"
         log_message("Warning: CUDA forced but not available. Falling back to CPU.")
         return torch.device("cpu"), False, "cpu"
+
+    # MPS強制
+    if preference == "mps":
+        # Check if MPS backend exists (PyTorch >= 1.12)
+        if not hasattr(torch.backends, 'mps'):
+            log_message("Warning: MPS not supported in this PyTorch version. Falling back to CPU.")
+            return torch.device("cpu"), False, "cpu"
+
+        if torch.backends.mps.is_available():
+            try:
+                device = torch.device("mps")
+                # Test device by creating a small tensor
+                _ = torch.zeros(1, device=device)
+                return device, True, "mps"
+            except Exception as e:
+                log_message(f"Warning: MPS device creation failed: {e}. Falling back to CPU.")
+                return torch.device("cpu"), False, "cpu"
+
+        log_message("Warning: MPS forced but not available. Falling back to CPU.")
+        return torch.device("cpu"), False, "cpu"
+
+    # Auto: 優先順位 MPS > CUDA > CPU
+    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        try:
+            device = torch.device("mps")
+            _ = torch.zeros(1, device=device)
+            return device, True, "mps"
+        except Exception:
+            pass  # Fall through to CUDA check
+
     if torch.cuda.is_available():
         return torch.device("cuda:0"), True, "cuda"
+
     return torch.device("cpu"), False, "cpu"
 
 
@@ -337,8 +379,37 @@ def main(video_file: str = None, high_precision: bool = False):
 
     # Resolve device
     DEVICE, USE_CUDA, DEVICE_STR = resolve_device(DEVICE_PREFERENCE)
-    if USE_CUDA:
+
+    # CUDA specific optimization (not applicable to MPS)
+    if DEVICE_STR == "cuda":
         torch.backends.cudnn.benchmark = True
+
+    # Log device information
+    log_message(f"Using device: {DEVICE_STR.upper()}")
+    if USE_CUDA:
+        log_message(f"GPU acceleration: enabled ({DEVICE})")
+
+    # Component configuration logging
+    log_message("=" * 40)
+    log_message("Component configuration:")
+
+    # YOLO configuration
+    if DEVICE_STR == "cuda":
+        log_message("  - YOLO: CUDA GPU (half=True)")
+    elif DEVICE_STR == "mps":
+        log_message("  - YOLO: MPS GPU (half=False)")
+    else:
+        log_message("  - YOLO: CPU")
+
+    # Deep SORT configuration
+    if DEVICE_STR == "cuda":
+        log_message("  - Deep SORT: CUDA GPU")
+    else:
+        log_message("  - Deep SORT: CPU" + (" (MPS not supported)" if DEVICE_STR == "mps" else ""))
+
+    # MediaPipe configuration
+    log_message("  - MediaPipe: CPU")
+    log_message("=" * 40)
 
     # Setup MediaPipe Pose Landmarker (Tasks API)
     model_path = os.path.join(MODEL_DIR, POSE_MODEL)
@@ -430,16 +501,18 @@ def main(video_file: str = None, high_precision: bool = False):
             yolo_model.to(DEVICE)
 
     # Tracker setup
+    # Deep SORT tracker configuration
+    # Note: GPU acceleration is CUDA-only, not supported on MPS
     tracker_kwargs = {
         "max_age": DEEPSORT_MAX_AGE,
         "n_init": DEEPSORT_N_INIT,
         "nms_max_overlap": 1.0,
         "embedder": "mobilenet",
-        "half": USE_CUDA,
+        "half": (DEVICE_STR == "cuda"),  # CUDA only
         "bgr": True
     }
     if "embedder_gpu" in inspect.signature(DeepSort).parameters:
-        tracker_kwargs["embedder_gpu"] = USE_CUDA
+        tracker_kwargs["embedder_gpu"] = (DEVICE_STR == "cuda")  # CUDA only
     tracker = DeepSort(**tracker_kwargs)
 
     # Store latest pose analysis results for display
@@ -458,6 +531,14 @@ def main(video_file: str = None, high_precision: bool = False):
         log_message("高精度モード: フレーム補間を使用（将来実装予定）")
     log_message("処理中...")
 
+    # Prepare YOLO device settings (optimize: calculate once before loop)
+    if DEVICE_STR == "cuda":
+        yolo_device, yolo_half = 0, True
+    elif DEVICE_STR == "mps":
+        yolo_device, yolo_half = "mps", False  # MPS does not support half precision
+    else:
+        yolo_device, yolo_half = "cpu", False
+
     pbar = tqdm(total=total_frames, desc="Processing", unit="frame")
     while True:
         ret, frame = cap.read()
@@ -475,8 +556,8 @@ def main(video_file: str = None, high_precision: bool = False):
                     classes=[0],
                     conf=YOLO_CONFIDENCE,
                     verbose=False,
-                    device=0 if USE_CUDA else "cpu",
-                    half=USE_CUDA
+                    device=yolo_device,
+                    half=yolo_half
                 )
         else:
             results = yolo_model(
@@ -484,8 +565,8 @@ def main(video_file: str = None, high_precision: bool = False):
                 classes=[0],
                 conf=YOLO_CONFIDENCE,
                 verbose=DEBUG,
-                device=0 if USE_CUDA else "cpu",
-                half=USE_CUDA
+                device=yolo_device,
+                half=yolo_half
             )  # class 0 = person
         rects = []
         for result in results:

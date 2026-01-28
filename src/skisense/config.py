@@ -17,7 +17,12 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 # =============================================================================
 DEBUG = False           # True: show all logs, False: suppress logs
 SHOW_GUI = False        # True: show preview window, False: headless mode
-DEVICE_PREFERENCE = "auto"  # "auto" | "cuda" | "cpu"
+# Device preference for PyTorch inference
+# - "auto": Auto-detect (priority: MPS > CUDA > CPU)
+# - "mps": Force Apple Silicon GPU (macOS only)
+# - "cuda": Force NVIDIA GPU (CUDA required)
+# - "cpu": Force CPU (no GPU acceleration)
+DEVICE_PREFERENCE = "auto"  # "auto" | "mps" | "cuda" | "cpu"
 
 # =============================================================================
 # Detection & Tracking Settings
