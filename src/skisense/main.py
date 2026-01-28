@@ -27,6 +27,40 @@ if not DEBUG:
     os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
     os.environ['GLOG_minloglevel'] = '3'  # Suppress Google logging (used by MediaPipe)
     os.environ['GRPC_VERBOSITY'] = 'ERROR'
+
+    # Additional TensorFlow Lite logging suppression
+    os.environ['TF_CPP_VMODULE'] = 'tflite=0'
+
+    # Suppress all stderr from C++ libraries
+    import sys
+    import io
+
+    # Redirect stderr to suppress C++ warnings
+    class SuppressStderr:
+        """Suppress C++ stderr output at OS level."""
+        def __enter__(self):
+            # Save Python's sys.stderr
+            self.original_stderr = sys.stderr
+            sys.stderr = io.StringIO()
+
+            # Save OS-level stderr (file descriptor 2)
+            self.original_stderr_fd = os.dup(2)
+
+            # Redirect stderr to devnull
+            self.devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(self.devnull, 2)
+
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            # Restore OS-level stderr
+            os.dup2(self.original_stderr_fd, 2)
+            os.close(self.original_stderr_fd)
+            os.close(self.devnull)
+
+            # Restore Python's sys.stderr
+            sys.stderr = self.original_stderr
+
     warnings.filterwarnings('ignore')
 
     # Suppress absl logging (used by TensorFlow/MediaPipe)
@@ -39,13 +73,7 @@ if not DEBUG:
     logging.getLogger('ultralytics').setLevel(logging.ERROR)
     logging.getLogger('tensorflow').setLevel(logging.ERROR)
 
-import cv2
-from deep_sort_realtime.deepsort_tracker import DeepSort
-from ultralytics import YOLO
-from .pose_analyzer import analyze_ski_pose, COLORS
-import mediapipe as mp
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
+# Standard library imports (no C++ warnings)
 import numpy as np
 import sys
 import torch
@@ -53,6 +81,34 @@ import inspect
 import tempfile
 import shutil
 import atexit
+from datetime import datetime
+import time
+from tqdm import tqdm
+
+# Suppress C++ warnings during heavy library imports
+if not DEBUG:
+    with SuppressStderr():
+        import cv2
+        from deep_sort_realtime.deepsort_tracker import DeepSort
+        from ultralytics import YOLO
+        from .pose_analyzer import analyze_ski_pose, COLORS
+        import mediapipe as mp
+        from mediapipe.tasks import python
+        from mediapipe.tasks.python import vision
+else:
+    import cv2
+    from deep_sort_realtime.deepsort_tracker import DeepSort
+    from ultralytics import YOLO
+    from .pose_analyzer import analyze_ski_pose, COLORS
+    import mediapipe as mp
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
+
+
+def log_message(message: str):
+    """Print timestamped log message."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] {message}")
 
 
 # Pose connections (33 landmarks)
@@ -73,7 +129,7 @@ def resolve_device(preference: str):
     if preference == "cuda":
         if torch.cuda.is_available():
             return torch.device("cuda:0"), True, "cuda"
-        print("Warning: CUDA forced but not available. Falling back to CPU.")
+        log_message("Warning: CUDA forced but not available. Falling back to CPU.")
         return torch.device("cpu"), False, "cpu"
     if torch.cuda.is_available():
         return torch.device("cuda:0"), True, "cuda"
@@ -268,11 +324,12 @@ def draw_info_panel(frame, analysis):
                 (panel_x + text_padding, y_pos), font, 0.8 * scale_factor, score_color, thickness)
 
 
-def main(video_file: str = None):
+def main(video_file: str = None, high_precision: bool = False):
     """Main processing function.
 
     Args:
         video_file: Video filename in input/ directory. Defaults to "video.mp4".
+        high_precision: If True, use frame interpolation for higher accuracy.
     """
     # Set default video file
     if video_file is None:
@@ -282,11 +339,6 @@ def main(video_file: str = None):
     DEVICE, USE_CUDA, DEVICE_STR = resolve_device(DEVICE_PREFERENCE)
     if USE_CUDA:
         torch.backends.cudnn.benchmark = True
-        print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
-        print(f"CUDA runtime: {torch.version.cuda}, torch: {torch.__version__}")
-    else:
-        print("Using CPU (CUDA not available).")
-        print(f"CUDA runtime: {torch.version.cuda}, torch: {torch.__version__}")
 
     # Setup MediaPipe Pose Landmarker (Tasks API)
     model_path = os.path.join(MODEL_DIR, POSE_MODEL)
@@ -294,10 +346,8 @@ def main(video_file: str = None):
     # Download model if not exists
     if not os.path.exists(model_path):
         import urllib.request
-        print("Downloading pose landmarker model...")
         os.makedirs(MODEL_DIR, exist_ok=True)
         urllib.request.urlretrieve(POSE_MODEL_URL, model_path)
-        print("Model downloaded successfully.")
 
     # Copy model to temp directory to avoid non-ASCII path issues with MediaPipe
     temp_dir = tempfile.mkdtemp()
@@ -315,13 +365,19 @@ def main(video_file: str = None):
         min_tracking_confidence=POSE_TRACKING_CONF,
         num_poses=1
     )
-    pose_landmarker = vision.PoseLandmarker.create_from_options(options)
+
+    # Suppress C++ warnings during model initialization
+    if not DEBUG:
+        with SuppressStderr():
+            pose_landmarker = vision.PoseLandmarker.create_from_options(options)
+    else:
+        pose_landmarker = vision.PoseLandmarker.create_from_options(options)
 
     # Input video path
     video_path = os.path.join(INPUT_DIR, video_file)
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        print(f"Error: Could not open video: {video_path}")
+        log_message(f"Error: Could not open video: {video_path}")
         return
 
     # Get video properties for output
@@ -331,17 +387,22 @@ def main(video_file: str = None):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     current_frame = 0
 
-    # Define output filename: same as input with '_pose' appended before the extension
-    base_name = os.path.splitext(os.path.basename(video_path))[0]
-    output_filename = f"{base_name}_pose.mp4"
-    output_path = os.path.join(OUTPUT_DIR, output_filename)
+    # Create timestamped output directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_dir = os.path.join(OUTPUT_DIR, timestamp)
+    os.makedirs(output_dir, exist_ok=True)
 
-    # Ensure output directory exists
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    # Define output file paths
+    output_video_path = os.path.join(output_dir, "video_pose.mp4")
+    best_shot_path = os.path.join(output_dir, "best_shot.jpg")
+    input_copy_path = os.path.join(output_dir, "video.mp4")
+
+    # Copy input video to output directory
+    shutil.copy2(video_path, input_copy_path)
 
     # Create VideoWriter object
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
 
     # Initialize ZoomTracker if enabled
     zoom_tracker = None
@@ -356,9 +417,17 @@ def main(video_file: str = None):
 
     # YOLO model for person detection
     yolo_model_path = os.path.join(MODEL_DIR, YOLO_MODEL)
-    yolo_model = YOLO(yolo_model_path)
-    if USE_CUDA:
-        yolo_model.to(DEVICE)
+
+    # Suppress C++ warnings during model loading
+    if not DEBUG:
+        with SuppressStderr():
+            yolo_model = YOLO(yolo_model_path)
+            if USE_CUDA:
+                yolo_model.to(DEVICE)
+    else:
+        yolo_model = YOLO(yolo_model_path)
+        if USE_CUDA:
+            yolo_model.to(DEVICE)
 
     # Tracker setup
     tracker_kwargs = {
@@ -376,37 +445,48 @@ def main(video_file: str = None):
     # Store latest pose analysis results for display
     latest_pose_analysis = None
 
-    print(f"Processing video: {video_path}")
-    print(f"Total frames: {total_frames}, FPS: {fps:.1f}")
-    print(f"Output: {output_path}")
-    if zoom_tracker is not None:
-        print(f"Zoom tracking: enabled (scale: {ZOOM_SCALE}x)")
-    else:
-        print("Zoom tracking: disabled")
-    print("-" * 50)
+    # Best score tracking
+    best_score = -1
+    best_frame = None
+    best_frame_number = 0
 
+    # Start time for elapsed time calculation
+    start_time = time.time()
+
+    log_message("処理を開始します")
+    if high_precision:
+        log_message("高精度モード: フレーム補間を使用（将来実装予定）")
+    log_message("処理中...")
+
+    pbar = tqdm(total=total_frames, desc="Processing", unit="frame")
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
         current_frame += 1
+        pbar.update(1)
 
-        # Show progress
-        if current_frame % 30 == 0 or current_frame == total_frames:
-            progress = (current_frame / total_frames) * 100
-            sys.stdout.write(f"\rProcessing: {current_frame}/{total_frames} ({progress:.1f}%)")
-            sys.stdout.flush()
-
-        # YOLO person detection
-        results = yolo_model(
-            frame,
-            classes=[0],
-            conf=YOLO_CONFIDENCE,
-            verbose=DEBUG,
-            device=0 if USE_CUDA else "cpu",
-            half=USE_CUDA
-        )  # class 0 = person
+        # YOLO person detection (suppress C++ warnings on first frame)
+        if not DEBUG and current_frame == 1:
+            with SuppressStderr():
+                results = yolo_model(
+                    frame,
+                    classes=[0],
+                    conf=YOLO_CONFIDENCE,
+                    verbose=False,
+                    device=0 if USE_CUDA else "cpu",
+                    half=USE_CUDA
+                )
+        else:
+            results = yolo_model(
+                frame,
+                classes=[0],
+                conf=YOLO_CONFIDENCE,
+                verbose=DEBUG,
+                device=0 if USE_CUDA else "cpu",
+                half=USE_CUDA
+            )  # class 0 = person
         rects = []
         for result in results:
             for box in result.boxes:
@@ -442,8 +522,12 @@ def main(video_file: str = None):
             # Create mp.Image object for Tasks API
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=roi_rgb)
 
-            # Run pose estimation
-            detection_result = pose_landmarker.detect(mp_image)
+            # Run pose estimation (suppress C++ warnings on first frame)
+            if not DEBUG and current_frame == 1:
+                with SuppressStderr():
+                    detection_result = pose_landmarker.detect(mp_image)
+            else:
+                detection_result = pose_landmarker.detect(mp_image)
 
             if detection_result.pose_landmarks:
                 # Analyze ski pose
@@ -468,6 +552,14 @@ def main(video_file: str = None):
             output_frame, zoom_info = zoom_tracker.process_frame(
                 frame, tracks, rects, shoulder_center
             )
+        else:
+            # Generate dummy zoom_info for no-zoom mode
+            # This ensures transform_point_to_zoom() returns normalized coordinates
+            zoom_info = {
+                'center': (width / 2, height / 2),
+                'scale': 1.0,
+                'crop': (0, 0, width, height)
+            }
 
         # Step 3: Draw on zoomed frame
         for data in landmarks_data:
@@ -481,6 +573,12 @@ def main(video_file: str = None):
         # Draw pose analysis info panel (on zoomed frame)
         draw_info_panel(output_frame, latest_pose_analysis)
 
+        # Track best score
+        if latest_pose_analysis and latest_pose_analysis['score'] > best_score:
+            best_score = latest_pose_analysis['score']
+            best_frame = output_frame.copy()
+            best_frame_number = current_frame
+
         # Write frame to output video
         out.write(output_frame)
 
@@ -488,12 +586,29 @@ def main(video_file: str = None):
         if SHOW_GUI:
             cv2.imshow("Ski Video - Pose & Tracking", output_frame)
             if cv2.waitKey(25) & 0xFF == ord('q'):
-                print("\n\nProcessing cancelled by user.")
+                log_message("処理が中断されました")
                 break
 
+    pbar.close()
+
+    # Save best scoring frame
+    if best_frame is not None and best_score > 0:
+        cv2.imwrite(best_shot_path, best_frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        log_message(f"ベストショット: フレーム {best_frame_number} (スコア: {best_score}/100)")
+    else:
+        log_message("スコアが記録されませんでした")
+
+    # Calculate elapsed time
+    end_time = time.time()
+    elapsed_seconds = int(end_time - start_time)
+    minutes = elapsed_seconds // 60
+    seconds = elapsed_seconds % 60
+    elapsed_str = f"{minutes}分{seconds}秒" if minutes > 0 else f"{seconds}秒"
+
+    log_message(f"出力先: {output_dir}")
+    log_message(f"処理が完了しました ({elapsed_str})")
+
     # Cleanup
-    print(f"\n\nProcessing complete!")
-    print(f"Output saved to: {output_path}")
 
     cap.release()
     out.release()
