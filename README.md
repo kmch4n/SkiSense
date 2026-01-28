@@ -115,24 +115,69 @@ python run.py my_ski_video.mp4
 
 ## Configuration
 
-Edit `src/skisense/config.py` to customize settings:
+SkiSense can be configured using a `.env` file in the project root. This allows you to customize settings without modifying the code.
 
-```python
-# Display settings
-DEBUG = False           # Show debug logs
-SHOW_GUI = False        # Show preview window during processing
+### Setup
 
-# Device settings
-DEVICE_PREFERENCE = "auto"  # "auto" | "mps" | "cuda" | "cpu"
-# - "auto": Auto-detect (priority: MPS > CUDA > CPU)
-# - "mps": Force Apple Silicon GPU (macOS only)
-# - "cuda": Force NVIDIA GPU (requires CUDA toolkit)
-# - "cpu": Force CPU (no GPU acceleration)
+1. Copy the example configuration:
+   ```bash
+   cp .env.example .env
+   ```
 
-# Detection settings
-YOLO_CONFIDENCE = 0.3   # Person detection confidence threshold
-ZOOM_ENABLED = True     # Enable automatic zoom to keep skier centered
+2. Edit `.env` with your preferred settings:
+   ```bash
+   # Enable debug mode and GUI preview
+   SKISENSE_DEBUG=true
+   SKISENSE_SHOW_GUI=true
+
+   # Adjust detection confidence
+   SKISENSE_YOLO_CONFIDENCE=0.4
+   ```
+
+3. Run SkiSense (settings from `.env` will be applied):
+   ```bash
+   python run.py
+   ```
+
+### Configuration Options
+
+All configuration options are documented in `.env.example`. Here are some common configurations:
+
+#### Development Mode (Show GUI + Debug Logs)
+```bash
+SKISENSE_DEBUG=true
+SKISENSE_SHOW_GUI=true
 ```
+
+#### Production Mode (Headless + Minimal Logs)
+```bash
+SKISENSE_DEBUG=false
+SKISENSE_SHOW_GUI=false
+```
+
+#### Force CPU Mode (No GPU)
+```bash
+SKISENSE_DEVICE=cpu
+```
+
+#### High Confidence Mode (Fewer False Positives)
+```bash
+SKISENSE_YOLO_CONFIDENCE=0.5
+SKISENSE_POSE_PRESENCE_CONF=0.5
+```
+
+### Available Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `SKISENSE_DEBUG` | false | Show detailed logs and warnings |
+| `SKISENSE_SHOW_GUI` | false | Show preview window during processing |
+| `SKISENSE_DEVICE` | auto | Device preference: auto, mps, cuda, cpu |
+| `SKISENSE_YOLO_CONFIDENCE` | 0.3 | Detection confidence (0.0-1.0) |
+| `SKISENSE_ZOOM_ENABLED` | true | Enable automatic zoom tracking |
+| `SKISENSE_ZOOM_SCALE` | 1.2 | Zoom magnification (1.0-5.0) |
+
+See `.env.example` for complete list and detailed descriptions.
 
 ### Device Selection
 

@@ -548,8 +548,8 @@ def main(video_file: str = None, high_precision: bool = False):
         current_frame += 1
         pbar.update(1)
 
-        # YOLO person detection (suppress C++ warnings on first frame)
-        if not DEBUG and current_frame == 1:
+        # YOLO person detection (suppress C++ warnings when DEBUG is False)
+        if not DEBUG:
             with SuppressStderr():
                 results = yolo_model(
                     frame,
@@ -603,8 +603,8 @@ def main(video_file: str = None, high_precision: bool = False):
             # Create mp.Image object for Tasks API
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=roi_rgb)
 
-            # Run pose estimation (suppress C++ warnings on first frame)
-            if not DEBUG and current_frame == 1:
+            # Run pose estimation (suppress C++ warnings when DEBUG is False)
+            if not DEBUG:
                 with SuppressStderr():
                     detection_result = pose_landmarker.detect(mp_image)
             else:

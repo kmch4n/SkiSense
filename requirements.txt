@@ -12,3 +12,4 @@ setuptools>=75.8.2
 ultralytics>=8.0.0
 absl-py>=1.4.0
 tqdm>=4.66.0
+python-dotenv>=1.0.0
