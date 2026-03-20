@@ -1,0 +1,52 @@
+# Python virtual environment
+.venv/
+.env
+env/
+.venv_mac/
+
+# Python compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Models (in models/ directory)
+models/*.task
+models/*.pt
+!models/.gitkeep
+
+# YOLO outputs
+runs/
+
+# Input files
+input/*
+!input/.gitkeep
+
+# Output files
+output/*
+!output/.gitkeep
+
+# Logs and temporary files
+logs/
+*.log
+*.tmp
+
+# OS system files
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AI tools
+.claude/
+.codex/
+
+# private
+notes/
