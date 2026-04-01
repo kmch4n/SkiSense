@@ -83,6 +83,11 @@ def get_landmark_point(landmarks, index, width, height):
     return (int(landmark.x * width), int(landmark.y * height))
 
 
+def is_landmark_visible(landmarks, index: int, threshold: float) -> bool:
+    """Check if a landmark meets the visibility threshold."""
+    return landmarks[index].visibility >= threshold
+
+
 def evaluate_knee_angle(angle):
     """
     Evaluate knee bend angle
@@ -140,7 +145,7 @@ def evaluate_ankle_angle(angle):
         return 'bad', "Fix"
 
 
-def analyze_ski_pose(landmarks, width, height):
+def analyze_ski_pose(landmarks, width, height, visibility_threshold: float = 0.5):
     """
     Analyze ski posture and return angle measurements
 
@@ -148,6 +153,7 @@ def analyze_ski_pose(landmarks, width, height):
         landmarks: List of pose landmarks from MediaPipe
         width: ROI width
         height: ROI height
+        visibility_threshold: Minimum visibility to trust a landmark
 
     Returns:
         dict with analysis results
@@ -174,75 +180,94 @@ def analyze_ski_pose(landmarks, width, height):
         left_foot = get_landmark_point(landmarks, LEFT_FOOT_INDEX, width, height)
         right_foot = get_landmark_point(landmarks, RIGHT_FOOT_INDEX, width, height)
 
-        # Calculate knee angles (hip -> knee -> ankle)
-        left_knee_angle = calculate_angle(left_hip, left_knee, left_ankle)
-        right_knee_angle = calculate_angle(right_hip, right_knee, right_ankle)
+        # Helper to check visibility of landmarks by indices
+        def _visible(*indices: int) -> bool:
+            return all(is_landmark_visible(landmarks, i, visibility_threshold) for i in indices)
 
-        # Calculate hip angles (shoulder -> hip -> knee)
-        left_hip_angle = calculate_angle(left_shoulder, left_hip, left_knee)
-        right_hip_angle = calculate_angle(right_shoulder, right_hip, right_knee)
+        # Calculate angles (only when all required landmarks are visible)
+        left_knee_angle = calculate_angle(left_hip, left_knee, left_ankle) if _visible(LEFT_HIP, LEFT_KNEE, LEFT_ANKLE) else None
+        right_knee_angle = calculate_angle(right_hip, right_knee, right_ankle) if _visible(RIGHT_HIP, RIGHT_KNEE, RIGHT_ANKLE) else None
+        left_hip_angle = calculate_angle(left_shoulder, left_hip, left_knee) if _visible(LEFT_SHOULDER, LEFT_HIP, LEFT_KNEE) else None
+        right_hip_angle = calculate_angle(right_shoulder, right_hip, right_knee) if _visible(RIGHT_SHOULDER, RIGHT_HIP, RIGHT_KNEE) else None
+        shoulder_tilt = calculate_horizontal_angle(left_shoulder, right_shoulder) if _visible(LEFT_SHOULDER, RIGHT_SHOULDER) else None
+        left_ankle_angle = calculate_angle(left_knee, left_ankle, left_foot) if _visible(LEFT_KNEE, LEFT_ANKLE, LEFT_FOOT_INDEX) else None
+        right_ankle_angle = calculate_angle(right_knee, right_ankle, right_foot) if _visible(RIGHT_KNEE, RIGHT_ANKLE, RIGHT_FOOT_INDEX) else None
 
-        # Calculate shoulder tilt
-        shoulder_tilt = calculate_horizontal_angle(left_shoulder, right_shoulder)
-
-        # Calculate ankle angles (knee -> ankle -> foot)
-        left_ankle_angle = calculate_angle(left_knee, left_ankle, left_foot)
-        right_ankle_angle = calculate_angle(right_knee, right_ankle, right_foot)
-
-        # Store angles
+        # Store angles (use 0.0 for display when not available)
         results['angles'] = {
-            'left_knee': left_knee_angle,
-            'right_knee': right_knee_angle,
-            'left_hip': left_hip_angle,
-            'right_hip': right_hip_angle,
-            'shoulder_tilt': shoulder_tilt,
-            'left_ankle': left_ankle_angle,
-            'right_ankle': right_ankle_angle
+            'left_knee': left_knee_angle if left_knee_angle is not None else 0.0,
+            'right_knee': right_knee_angle if right_knee_angle is not None else 0.0,
+            'left_hip': left_hip_angle if left_hip_angle is not None else 0.0,
+            'right_hip': right_hip_angle if right_hip_angle is not None else 0.0,
+            'shoulder_tilt': shoulder_tilt if shoulder_tilt is not None else 0.0,
+            'left_ankle': left_ankle_angle if left_ankle_angle is not None else 0.0,
+            'right_ankle': right_ankle_angle if right_ankle_angle is not None else 0.0
         }
 
-        # Evaluate each angle
+        # Evaluate each angle (skip from scoring if landmarks not visible)
         evaluations = {}
         score_total = 0
         score_count = 0
 
         # Knee evaluations
-        status, label = evaluate_knee_angle(left_knee_angle)
-        evaluations['left_knee'] = {'status': status, 'label': label}
-        score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-        score_count += 1
+        if left_knee_angle is not None:
+            status, label = evaluate_knee_angle(left_knee_angle)
+            evaluations['left_knee'] = {'status': status, 'label': label}
+            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
+            score_count += 1
+        else:
+            evaluations['left_knee'] = {'status': 'info', 'label': 'N/A'}
 
-        status, label = evaluate_knee_angle(right_knee_angle)
-        evaluations['right_knee'] = {'status': status, 'label': label}
-        score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-        score_count += 1
+        if right_knee_angle is not None:
+            status, label = evaluate_knee_angle(right_knee_angle)
+            evaluations['right_knee'] = {'status': status, 'label': label}
+            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
+            score_count += 1
+        else:
+            evaluations['right_knee'] = {'status': 'info', 'label': 'N/A'}
 
         # Hip evaluations
-        status, label = evaluate_hip_angle(left_hip_angle)
-        evaluations['left_hip'] = {'status': status, 'label': label}
-        score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-        score_count += 1
+        if left_hip_angle is not None:
+            status, label = evaluate_hip_angle(left_hip_angle)
+            evaluations['left_hip'] = {'status': status, 'label': label}
+            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
+            score_count += 1
+        else:
+            evaluations['left_hip'] = {'status': 'info', 'label': 'N/A'}
 
-        status, label = evaluate_hip_angle(right_hip_angle)
-        evaluations['right_hip'] = {'status': status, 'label': label}
-        score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-        score_count += 1
+        if right_hip_angle is not None:
+            status, label = evaluate_hip_angle(right_hip_angle)
+            evaluations['right_hip'] = {'status': status, 'label': label}
+            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
+            score_count += 1
+        else:
+            evaluations['right_hip'] = {'status': 'info', 'label': 'N/A'}
 
         # Shoulder tilt evaluation
-        status, label = evaluate_shoulder_tilt(shoulder_tilt)
-        evaluations['shoulder_tilt'] = {'status': status, 'label': label}
-        score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-        score_count += 1
+        if shoulder_tilt is not None:
+            status, label = evaluate_shoulder_tilt(shoulder_tilt)
+            evaluations['shoulder_tilt'] = {'status': status, 'label': label}
+            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
+            score_count += 1
+        else:
+            evaluations['shoulder_tilt'] = {'status': 'info', 'label': 'N/A'}
 
         # Ankle evaluations
-        status, label = evaluate_ankle_angle(left_ankle_angle)
-        evaluations['left_ankle'] = {'status': status, 'label': label}
-        score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-        score_count += 1
+        if left_ankle_angle is not None:
+            status, label = evaluate_ankle_angle(left_ankle_angle)
+            evaluations['left_ankle'] = {'status': status, 'label': label}
+            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
+            score_count += 1
+        else:
+            evaluations['left_ankle'] = {'status': 'info', 'label': 'N/A'}
 
-        status, label = evaluate_ankle_angle(right_ankle_angle)
-        evaluations['right_ankle'] = {'status': status, 'label': label}
-        score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-        score_count += 1
+        if right_ankle_angle is not None:
+            status, label = evaluate_ankle_angle(right_ankle_angle)
+            evaluations['right_ankle'] = {'status': status, 'label': label}
+            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
+            score_count += 1
+        else:
+            evaluations['right_ankle'] = {'status': 'info', 'label': 'N/A'}
 
         results['evaluations'] = evaluations
         results['score'] = int(score_total / score_count) if score_count > 0 else 0

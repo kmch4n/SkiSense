@@ -11,7 +11,8 @@ from .config import (
     YOLO_MODEL, POSE_MODEL, POSE_MODEL_URL,
     ZOOM_ENABLED, ZOOM_SCALE, ZOOM_SMOOTHING, ZOOM_PADDING,
     YOLO_CONFIDENCE, DEEPSORT_MAX_AGE, DEEPSORT_N_INIT,
-    POSE_PRESENCE_CONF, POSE_TRACKING_CONF, POSE_DETECTION_CONFIDENCE
+    POSE_PRESENCE_CONF, POSE_TRACKING_CONF, POSE_DETECTION_CONFIDENCE,
+    POSE_VISIBILITY_THRESHOLD, ROI_PADDING_RATIO
 )
 from .zoom_tracker import ZoomTracker
 
@@ -232,12 +233,16 @@ def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info):
     h, w = frame.shape[:2]
     bx, by, bw, bh = bbox
 
-    # Transform and draw connections
+    # Transform and draw connections (skip low-visibility landmarks)
     for connection in POSE_CONNECTIONS:
         start_idx, end_idx = connection
         if start_idx < len(landmarks) and end_idx < len(landmarks):
             start_lm = landmarks[start_idx]
             end_lm = landmarks[end_idx]
+
+            # Skip if either landmark has low visibility
+            if start_lm.visibility < POSE_VISIBILITY_THRESHOLD or end_lm.visibility < POSE_VISIBILITY_THRESHOLD:
+                continue
 
             # Get ROI coordinates
             start_roi = (start_lm.x * bw, start_lm.y * bh)
@@ -252,8 +257,11 @@ def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info):
                 end_point = (int(end_zoom[0] * w), int(end_zoom[1] * h))
                 cv2.line(frame, start_point, end_point, (0, 255, 0), 2)
 
-    # Draw landmarks
+    # Draw landmarks (skip low-visibility)
     for landmark in landmarks:
+        if landmark.visibility < POSE_VISIBILITY_THRESHOLD:
+            continue
+
         roi_point = (landmark.x * bw, landmark.y * bh)
         zoom_point = transform_point_to_zoom(roi_point, bbox, zoom_info)
 
@@ -430,7 +438,7 @@ def main(video_file: str = None, high_precision: bool = False):
     base_options = python.BaseOptions(model_asset_path=temp_model_path)
     options = vision.PoseLandmarkerOptions(
         base_options=base_options,
-        running_mode=vision.RunningMode.IMAGE,
+        running_mode=vision.RunningMode.VIDEO,
         min_pose_detection_confidence=POSE_DETECTION_CONFIDENCE,
         min_pose_presence_confidence=POSE_PRESENCE_CONF,
         min_tracking_confidence=POSE_TRACKING_CONF,
@@ -595,8 +603,16 @@ def main(video_file: str = None, high_precision: bool = False):
         # Step 1: Pose estimation only (no drawing)
         landmarks_data = []
         for (x, y, w, h) in rects:
-            # Crop the region of interest (ROI)
-            roi = frame[y:y+h, x:x+w]
+            # Expand ROI with padding for better pose accuracy
+            pad_w = int(w * ROI_PADDING_RATIO)
+            pad_h = int(h * ROI_PADDING_RATIO)
+            px = max(0, x - pad_w)
+            py = max(0, y - pad_h)
+            pw = min(width, x + w + pad_w) - px
+            ph = min(height, y + h + pad_h) - py
+
+            # Crop the padded region of interest (ROI)
+            roi = frame[py:py+ph, px:px+pw]
             # Convert from BGR to RGB for MediaPipe
             roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
 
@@ -604,23 +620,24 @@ def main(video_file: str = None, high_precision: bool = False):
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=roi_rgb)
 
             # Run pose estimation (suppress C++ warnings when DEBUG is False)
+            timestamp_ms = int(current_frame * 1000 / fps)
             if not DEBUG:
                 with SuppressStderr():
-                    detection_result = pose_landmarker.detect(mp_image)
+                    detection_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
             else:
-                detection_result = pose_landmarker.detect(mp_image)
+                detection_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
 
             if detection_result.pose_landmarks:
-                # Analyze ski pose
+                # Analyze ski pose (use padded ROI dimensions)
                 roi_h, roi_w = roi_rgb.shape[:2]
-                analysis = analyze_ski_pose(detection_result.pose_landmarks[0], roi_w, roi_h)
+                analysis = analyze_ski_pose(detection_result.pose_landmarks[0], roi_w, roi_h, POSE_VISIBILITY_THRESHOLD)
                 if analysis:
                     latest_pose_analysis = analysis
 
-                    # Store landmarks and metadata for later drawing
+                    # Store landmarks with padded bbox for correct coordinate transforms
                     landmarks_data.append({
                         'landmarks': detection_result.pose_landmarks[0],
-                        'bbox': (x, y, w, h),
+                        'bbox': (px, py, pw, ph),
                         'shoulder_center': analysis.get('shoulder_center')
                     })
 

@@ -91,6 +91,8 @@ DEEPSORT_N_INIT = _get_int('SKISENSE_DEEPSORT_N_INIT', 1, min_val=1)           #
 POSE_PRESENCE_CONF = _get_float('SKISENSE_POSE_PRESENCE_CONF', 0.3, min_val=0.0, max_val=1.0)      # MediaPipe pose presence confidence
 POSE_TRACKING_CONF = _get_float('SKISENSE_POSE_TRACKING_CONF', 0.3, min_val=0.0, max_val=1.0)      # MediaPipe pose tracking confidence
 POSE_DETECTION_CONFIDENCE = _get_float('SKISENSE_POSE_DETECTION_CONFIDENCE', 0.5, min_val=0.0, max_val=1.0)  # MediaPipe pose detection confidence
+POSE_VISIBILITY_THRESHOLD = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD', 0.5, min_val=0.0, max_val=1.0)  # Minimum landmark visibility to draw/use
+ROI_PADDING_RATIO = _get_float('SKISENSE_ROI_PADDING', 0.2, min_val=0.0, max_val=1.0)  # ROI bbox expansion ratio for better pose accuracy
 
 # =============================================================================
 # Model Settings
