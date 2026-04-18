@@ -1,251 +1,148 @@
 # SkiSense
 
-Ski pose analysis tool using computer vision and deep learning.
+スキー滑走映像から滑走者の姿勢を推定・可視化し、フォームを定量的に評価するコンピュータビジョンツールである。
 
 ![SkiSense preview](images/skier.gif)
+![SkiSense preview](images/skier2.gif)
 
-## Overview
+---
 
-SkiSense analyzes ski videos to detect and evaluate skiing posture in real-time. It provides:
+## 開発の背景
 
-- **Person Detection:** YOLOv8x for accurate skier detection
-- **Pose Estimation:** MediaPipe Pose Landmarker for joint tracking
-- **Pose Analysis:** Real-time evaluation of knee, hip, ankle angles and shoulder tilt
-- **Score Display:** Overall posture score (0-100)
-- **Object Tracking:** Deep SORT for consistent tracking across frames
-- **GPU Acceleration:** Supports NVIDIA CUDA and Apple Silicon MPS
+本プロジェクトの開発者は幼少期からスキーを続けており、大学ではスキーサークルに所属し **基礎スキー**（フォームの美しさと技術点を競う競技種目）に取り組んでいる。基礎スキーには一定の採点基準が存在するものの、最終的な点数は審判の主観に委ねられる部分が大きく、滑走者自身が客観的に自己評価を行う手段は限られている。一方、日本ではスキー滑走映像を分析・可視化するツールは普及しておらず、競技者が日常的に利用できる環境は整っていない。
 
-## Installation
+### 当初の目的とその断念
 
-### Quick Start (Windows/Linux with NVIDIA GPU)
+当初は **大量の滑走データと検定点数の組合せを学習させ、AI が自動採点を行うツール** を目指していた。しかし、以下の制約が実用レベルでの達成を阻むことが判明した。
 
-**Recommended for most users - includes GPU acceleration (1.5-3x faster)**
+- 映像からは斜度が判断できない
+- 雪面状況（硬さ・湿り気・凹凸）は実際に滑走しなければ評価できない
+- 検定基準を再現するには学習データの質・量ともに不足している
 
-1. Install CUDA Toolkit 11.8 from [NVIDIA website](https://developer.nvidia.com/cuda-downloads)
-2. Verify CUDA installation:
-   ```bash
-   nvidia-smi
-   ```
-3. Install dependencies:
-   ```bash
-   # Create virtual environment
-   python -m venv .venv
+### 方針転換と現在の成果
 
-   # Activate (Windows)
-   .venv\Scripts\activate
+以上の検証結果を踏まえ、プロジェクトのスコープを **「自動採点」から「姿勢の可視化と定量評価」に再定義** した。現在の SkiSense は、関節角度を数値で示し、理想的な範囲との乖離を色分けで提示する可視化ツールとして機能している。
 
-   # Activate (Linux)
-   source .venv/bin/activate
+この方針転換の結果として得られた副次的価値は大きい。開発者自身の練習にも用いており、左右の腕の動きの対称性、内傾角、内膝の倒し込みといった、自覚しにくい動きを客観的に確認できるようになった。これは実際の技術向上に寄与している。
 
-   # Install PyTorch with CUDA 11.8 support
-   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+**開発期間:** 2026 年 1 月開始、継続改善中。
 
-   # Install other dependencies
-   pip install -r requirements.txt
-   ```
+---
 
-### macOS with Apple Silicon (M1/M2/M3)
+## 主な機能
 
-**Automatic GPU acceleration (1.5-3x faster than CPU)**
+- **人物検出** — YOLOv8x によるスキーヤー検出
+- **骨格推定** — MediaPipe Pose Landmarker（33 点のランドマーク）
+- **関節角度評価** — 膝・股関節・足首の屈曲角と肩の水平傾き
+- **総合スコア** — 0〜100 点での姿勢評価
+- **複数人トラッキング** — Deep SORT によるフレーム間の ID 一貫性
+- **自動ズーム・センタリング** — 滑走者を追尾する EMA ベースのスムーズズーム
+- **ベストショット抽出** — 最高スコアのフレームを自動保存
 
-```bash
-# Create virtual environment (Python 3.11+ recommended)
-python3.11 -m venv .venv
-source .venv/bin/activate
+---
 
-# Install CPU-compatible PyTorch (MPS support is built-in)
-pip install torch torchvision
-pip install -r requirements.txt
-```
+## 技術スタック
 
-SkiSense automatically detects and uses Apple Silicon GPU.
+| 技術 | 役割 | 採用理由 |
+|------|------|---------|
+| [YOLOv8x](https://github.com/ultralytics/ultralytics) | 人物検出 | 高精度で複数人シーンでも安定。Ultralytics が公開する学習済みモデルを使用 |
+| [MediaPipe Pose Landmarker (heavy)](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker) | 骨格推定 | 33 点のランドマークで関節角度計算に十分な精度。重量モデルを優先採用 |
+| [Deep SORT](https://github.com/nwojke/deep_sort) | トラッキング | フレーム間で検出された人物に一貫した ID を付与 |
+| [OpenCV](https://opencv.org/) | 動画入出力・描画 | 業界標準の CV ライブラリ |
+| [PyTorch](https://pytorch.org/) | DL バックエンド | CUDA / MPS / CPU の統一 API |
+| python-dotenv | 設定管理 | 設定値をコードから分離し、環境別の切替を容易にする |
 
-### CPU-Only Installation (No GPU)
+---
 
-For systems without NVIDIA GPU or for testing:
+## アーキテクチャ
 
-```bash
-# Create virtual environment
-python -m venv .venv
+### 処理パイプライン（フレーム単位）
 
-# Activate
-# Windows: .venv\Scripts\activate
-# Linux/Mac: source .venv/bin/activate
+フレーム単位で以下の 3 ステップを順に実行する。
 
-# Install CPU-only PyTorch
-pip install torch torchvision
+1. **検出・トラッキング** — YOLOv8 で人物を検出し、Deep SORT により持続的な ID を割り当てる
+2. **骨格推定** — 検出領域（ROI）をクロップし、MediaPipe で骨格推定を行ったうえで `pose_analyzer` にて関節角度を評価する
+3. **描画** — ZoomTracker によるズーム変換を適用し、骨格線と bbox を描画、最後に情報パネル（スコア・角度）を重ねる
 
-# Install other dependencies
-pip install -r requirements.txt
-```
+### モジュール構成
 
-**Note:** PyTorch must be installed separately before `requirements.txt` because the correct version depends on your hardware (CUDA version, macOS, or CPU-only).
+- **`config.py`** — `.env` から全設定を読み込み、型変換とバリデーションを行う
+- **`pose_analyzer.py`** — 純粋関数による関節角度の計算と評価。副作用・I/O なし
+- **`zoom_tracker.py`** — EMA スムージングによる滑走者追尾。検出タイムアウト 30 フレーム
+- **`main.py`** — オーケストレーション。デバイス解決、モデル初期化、フレームループ、動画 I/O
 
-### Alternative CUDA Versions
+### デバイス解決ロジック
 
-If you have a different CUDA version installed:
+`auto` モード時の優先順位は **MPS > CUDA > CPU**。ただしコンポーネントごとに制約が異なり、単純な「GPU ありなし」では済まない。
 
-```bash
-# CUDA 12.1
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+- **Deep SORT** は MPS 非対応 → macOS でも CPU フォールバック
+- **MediaPipe** は常に CPU（GPU 推論の公開 API が限定的）
+- **YOLO** は CUDA 時のみ `half=True`、MPS では `half=False` が必須
 
-# CUDA 12.4
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+---
 
-# Then install other dependencies
-pip install -r requirements.txt
-```
+## 姿勢評価ロジック
 
-Check your CUDA version with `nvidia-smi` or `nvcc --version`.
+`pose_analyzer.py` は以下の関節角度を評価する。理想範囲は基礎スキーの一般的なフォーム指導に基づいて設定している。
 
-## Usage
+| 評価項目 | Good | Caution | Fix |
+|---------|------|---------|-----|
+| 膝屈曲角（左右） | 90°〜120° | 80°〜90° / 120°〜140° | それ以外 |
+| 股関節角度（左右、前傾） | 100°〜130° | 90°〜100° / 130°〜150° | それ以外 |
+| 足首角度（左右、ブーツ前圧） | 70°〜90° | 90°〜110° | それ以外 |
+| 肩の水平傾き | ±10° 以内 | ±20° 以内 | それ以上 |
 
-```bash
-# Process default video (input/video.mp4)
-python run.py
+### スコア化
 
-# Process specific video
-python run.py my_ski_video.mp4
-```
+各項目を Good=100 / Caution=50 / Fix=0 で採点し、算出可能な項目の平均を取って **0〜100 点** の総合スコアを算出する。visibility（ランドマーク可視度）が閾値未満の項目は計算不能として採点から除外される。
 
-- Place input videos in `input/` directory
-- Output videos are saved in `output/` as timestamped directories containing:
-  - `{filename}_pose.mp4` - Annotated video
-  - `best_shot.jpg` - Best posture frame
+### ドメイン知識の反映
 
-## Configuration
+- **前傾姿勢** は股関節角度で測定。猫背にならず、かつ腰を引かない範囲を Good とする
+- **足首の前圧** は足首屈曲角で測定。ブーツを押し込むフォームを評価
+- **肩の水平維持** は左右軸の安定性指標。内傾時も肩が過度に傾かないことが理想
+- **膝の屈曲** は適度なクッションと荷重の指標
 
-SkiSense can be configured using a `.env` file in the project root. This allows you to customize settings without modifying the code.
+---
 
-### Setup
+## 開発で苦労したこと
 
-1. Copy the example configuration:
-   ```bash
-   cp .env.example .env
-   ```
+### 1. 当初目的からの方針転換
 
-2. Edit `.env` with your preferred settings:
-   ```bash
-   # Enable debug mode and GUI preview
-   SKISENSE_DEBUG=true
-   SKISENSE_SHOW_GUI=true
+AI 自動採点という当初目的は、映像単体では取得できない情報（斜度・雪面状況）と学習データの制約により達成困難であった。プロジェクトを完走させることを優先して妥協した機能を実装するよりも、**スコープそのものを再定義して確実に価値を出す** 判断に切り替えた。結果として、自己練習ツールとしての実用価値を獲得し、副次的ではあるが自身の技術向上という具体的な成果に結びついている。
 
-   # Adjust detection confidence
-   SKISENSE_YOLO_CONFIDENCE=0.4
-   ```
+### 2. 座標変換の 3 段階管理
 
-3. Run SkiSense (settings from `.env` will be applied):
-   ```bash
-   python run.py
-   ```
+滑走者を画面中央に追尾するためのズーム機能を後から追加した際、座標系の混乱が発生した。フレーム上の点は以下の 3 つの座標系で扱われる。
 
-### Configuration Options
+1. **ROI 座標** — 検出された人物の bbox 内部の相対座標（MediaPipe の出力）
+2. **フレーム座標** — 動画全体の絶対座標
+3. **ズーム座標** — 拡大・中心調整後の最終出力座標
 
-All configuration options are documented in `.env.example`. Here are some common configurations:
+当初はズーム係数を各描画処理に散らばせて適用していたため、ランドマーク・bbox・情報パネル間で微妙な位置ずれが発生し、デバッグに苦しんだ。最終的には **`transform_point_to_zoom()`**（`main.py:182`）に変換を一元化し、全ての座標は必ずこの関数を通過させる設計に改めた。これにより描画のずれは解消し、保守性も向上した。
 
-#### Development Mode (Show GUI + Debug Logs)
-```bash
-SKISENSE_DEBUG=true
-SKISENSE_SHOW_GUI=true
-```
+### 3. GPU スペック依存による処理速度の制約
 
-#### Production Mode (Headless + Minimal Logs)
-```bash
-SKISENSE_DEBUG=false
-SKISENSE_SHOW_GUI=false
-```
+開発環境は 2020 年のハイエンド PC だが、MediaPipe heavy モデルと YOLOv8x の組合せでは 1 フレーム当たりの処理時間が長く、長時間映像の処理で顕著にボトルネックとなった。軽量モデル（lite / full）への切替も検討したが、精度低下が大きかったため heavy を維持し、設定可能なパラメータの調整で妥協点を探る方針とした。
 
-#### Force CPU Mode (No GPU)
-```bash
-SKISENSE_DEVICE=cpu
-```
+### 4. 映像品質と天候による精度変動
 
-#### High Confidence Mode (Fewer False Positives)
-```bash
-SKISENSE_YOLO_CONFIDENCE=0.5
-SKISENSE_POSE_PRESENCE_CONF=0.5
-```
+滑走映像は屋外で撮影されるため、画質・逆光・雪面反射・曇天などの条件で骨格推定が不安定化することが判明した。特に低 visibility のランドマークが画面外に飛び出す現象が目立った。この問題に対しては、以下の改善を段階的に積み重ねている（コミット `28eead2`）。
 
-### Available Settings
+- **visibility 閾値** による低信頼ランドマークの除外
+- **ROI パディング** で切れた手足を救済
+- **MediaPipe VIDEO モード化** による時間的一貫性の確保
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `SKISENSE_DEBUG` | false | Show detailed logs and warnings |
-| `SKISENSE_SHOW_GUI` | false | Show preview window during processing |
-| `SKISENSE_DEVICE` | auto | Device preference: auto, mps, cuda, cpu |
-| `SKISENSE_YOLO_CONFIDENCE` | 0.3 | Detection confidence (0.0-1.0) |
-| `SKISENSE_POSE_MODEL_TYPE` | full | Pose model: lite, full, heavy |
-| `SKISENSE_POSE_DETECTION_CONFIDENCE` | 0.5 | Pose detection confidence (0.0-1.0) |
-| `SKISENSE_ZOOM_ENABLED` | true | Enable automatic zoom tracking |
-| `SKISENSE_ZOOM_SCALE` | 1.2 | Zoom magnification (1.0-5.0) |
+---
 
-See `.env.example` for complete list and detailed descriptions.
+## 今後の改善予定
 
-### Device Selection
+- **One-Euro フィルタ** による時間的スムージングの導入（ランドマーク座標のジッター低減）
+- **YOLO-Pose** への移行検討（MediaPipe 依存を減らし GPU 推論に一本化）
+- **自前データセットによるファインチューニング** — 基礎スキー特化のフォーム評価精度向上
 
-SkiSense automatically selects the best available device:
-1. **Apple Silicon GPU (MPS)** - macOS M1/M2/M3
-2. **NVIDIA GPU (CUDA)** - Windows/Linux with CUDA toolkit
-3. **CPU** - Fallback for all platforms
+---
 
-Check the output logs to see which device is being used:
-```
-[timestamp] Using device: MPS
-[timestamp] GPU acceleration: enabled (mps)
-[timestamp] ========================================
-[timestamp] Component configuration:
-[timestamp]   - YOLO: MPS GPU (half=False)
-[timestamp]   - Deep SORT: CPU (MPS not supported)
-[timestamp]   - MediaPipe: CPU
-[timestamp] ========================================
-```
+## License
 
-## Project Structure
-
-```
-SkiSense/
-├── src/skisense/      # Source code
-│   ├── main.py         # Main processing
-│   ├── pose_analyzer.py # Pose analysis
-│   ├── config.py       # Configuration
-│   └── zoom_tracker.py # Zoom tracking
-├── models/             # Model files (auto-downloaded)
-├── input/              # Input videos
-├── output/             # Output videos (timestamped)
-├── run.py              # Entry point
-└── requirements.txt
-```
-
-## Requirements
-
-- Python 3.10+
-- **Recommended for real-time processing:**
-  - NVIDIA GPU with CUDA 11.8+ (Windows/Linux)
-  - Apple Silicon M1/M2/M3 (macOS)
-
-## Performance Comparison
-
-| Hardware | Processing Speed | Notes |
-|----------|-----------------|-------|
-| NVIDIA GPU (CUDA) | 🚀 Fastest | All components GPU-accelerated |
-| Apple Silicon (MPS) | ⚡ Fast | YOLO GPU-accelerated, 1.5-3x faster than CPU |
-| CPU | 🐢 Slow | All components CPU-only |
-
-## Tech Stack
-
-- [YOLOv8](https://github.com/ultralytics/ultralytics) - Person detection
-- [MediaPipe](https://developers.google.com/mediapipe) - Pose estimation
-- [Deep SORT](https://github.com/nwojke/deep_sort) - Object tracking
-- [OpenCV](https://opencv.org/) - Video processing
-- [PyTorch](https://pytorch.org/) - Deep learning backend
-
-## Features
-
-- ✅ GPU acceleration (NVIDIA CUDA / Apple Silicon MPS)
-- ✅ Automatic device detection
-- ✅ Real-time pose evaluation
-- ✅ Multi-person tracking
-- ✅ Best shot extraction
-- ✅ Automatic zoom and centering
-- ✅ Timestamped output files
-- ✅ Headless mode (no GUI required)
+MIT License. 詳細は [LICENSE](LICENSE) を参照。
