@@ -88,44 +88,23 @@ DEVICE_PREFERENCE = _get_str('SKISENSE_DEVICE', 'auto',
 YOLO_CONFIDENCE = _get_float('SKISENSE_YOLO_CONFIDENCE', 0.3, min_val=0.0, max_val=1.0)         # YOLO detection confidence threshold (0.0-1.0)
 DEEPSORT_MAX_AGE = _get_int('SKISENSE_DEEPSORT_MAX_AGE', 30, min_val=1)         # Frames to keep track without detection
 DEEPSORT_N_INIT = _get_int('SKISENSE_DEEPSORT_N_INIT', 1, min_val=1)           # Frames required to confirm new track
-POSE_PRESENCE_CONF = _get_float('SKISENSE_POSE_PRESENCE_CONF', 0.3, min_val=0.0, max_val=1.0)      # MediaPipe pose presence confidence
-POSE_TRACKING_CONF = _get_float('SKISENSE_POSE_TRACKING_CONF', 0.3, min_val=0.0, max_val=1.0)      # MediaPipe pose tracking confidence
-POSE_DETECTION_CONFIDENCE = _get_float('SKISENSE_POSE_DETECTION_CONFIDENCE', 0.5, min_val=0.0, max_val=1.0)  # MediaPipe pose detection confidence
 POSE_VISIBILITY_THRESHOLD = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD', 0.5, min_val=0.0, max_val=1.0)  # Minimum landmark visibility for upper-body joints
 POSE_VISIBILITY_THRESHOLD_LEGS = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD_LEGS', 0.3, min_val=0.0, max_val=1.0)  # Looser threshold for leg joints (often occluded in ski poses)
 ROI_PADDING_RATIO = _get_float('SKISENSE_ROI_PADDING', 0.3, min_val=0.0, max_val=1.0)  # ROI bbox expansion ratio for better pose accuracy
 
-# Preprocessing / TTA toggles (opt-in, validated as often harmful on our ski footage)
-CLAHE_ENABLED = _get_bool('SKISENSE_CLAHE_ENABLED', False)  # Apply CLAHE to ROI before pose estimation (left opt-in after testing showed it amplifies snow noise)
+# Preprocessing / TTA toggles (opt-in, validated as data-dependent on ski footage)
+CLAHE_ENABLED = _get_bool('SKISENSE_CLAHE_ENABLED', False)  # Apply CLAHE to ROI before pose estimation
 FLIP_TTA_ENABLED = _get_bool('SKISENSE_FLIP_TTA_ENABLED', False)  # Run pose estimation on horizontal flip too and pick best-visibility landmarks (doubles inference cost)
 
 # =============================================================================
 # Model Settings
 # =============================================================================
 YOLO_MODEL = "yolov8x.pt"           # YOLOv8 model file (person detection)
-POSE_MODEL = "pose_landmarker.task"  # MediaPipe pose landmarker model
 
-# Pose estimation backend selection
-#   mediapipe: Google MediaPipe Pose Landmarker (33 landmarks, CPU only)
-#   yolo11:    Ultralytics YOLO11-Pose (COCO-17 landmarks, GPU-friendly)
-POSE_BACKEND = _get_str('SKISENSE_POSE_BACKEND', 'mediapipe',
-                         valid_options=['mediapipe', 'yolo11'])
-
-# YOLO11-Pose model filename (used when POSE_BACKEND=yolo11)
+# YOLO11-Pose model filename
 YOLO_POSE_MODEL = _get_str('SKISENSE_YOLO_POSE_MODEL', 'yolo11x-pose.pt')
 YOLO_POSE_CONFIDENCE = _get_float('SKISENSE_YOLO_POSE_CONFIDENCE', 0.25,
                                    min_val=0.0, max_val=1.0)
-
-# MediaPipe Pose model type selection
-POSE_MODEL_TYPE = _get_str('SKISENSE_POSE_MODEL_TYPE', 'heavy',
-                            valid_options=['lite', 'full', 'heavy'])  # lite: fast/low accuracy, full: balanced, heavy: slow/high accuracy
-
-# Model download URL (dynamically generated based on POSE_MODEL_TYPE)
-POSE_MODEL_URL = (
-    f"https://storage.googleapis.com/mediapipe-models/"
-    f"pose_landmarker/pose_landmarker_{POSE_MODEL_TYPE}/float16/latest/"
-    f"pose_landmarker_{POSE_MODEL_TYPE}.task"
-)
 
 # =============================================================================
 # Zoom Settings (Center Tracking)

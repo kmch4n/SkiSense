@@ -2,7 +2,7 @@
 
 Analyzes a single ski image (still frame) and saves the annotated result.
 Shares YOLO detection and drawing helpers with ``main.py`` and delegates
-pose estimation to the configured pose backend.
+pose estimation to the YOLO11-Pose backend.
 """
 import os
 import shutil
@@ -12,7 +12,7 @@ from datetime import datetime
 import cv2
 
 from .backends import get_backend
-from .config import DEVICE_PREFERENCE, INPUT_DIR, OUTPUT_DIR, POSE_BACKEND
+from .config import DEVICE_PREFERENCE, INPUT_DIR, OUTPUT_DIR
 from .main import (
     draw_bbox_on_zoomed_frame,
     draw_info_panel,
@@ -22,7 +22,7 @@ from .main import (
     resolve_device,
     run_yolo_detection,
 )
-from .pose_topology import MEDIAPIPE_33
+from .pose_topology import COCO_17
 
 
 def _pick_largest_bbox(rects):
@@ -59,7 +59,7 @@ def process_image(image_file: str = None):
         log_message("  - YOLO: MPS GPU (half=False)")
     else:
         log_message("  - YOLO: CPU")
-    log_message(f"  - Pose backend: {POSE_BACKEND}")
+    log_message("  - Pose: YOLO11-Pose")
     log_message("=" * 40)
 
     image_path = os.path.join(INPUT_DIR, image_file)
@@ -83,7 +83,6 @@ def process_image(image_file: str = None):
     shutil.copy2(image_path, input_copy_path)
 
     pose_backend = get_backend(
-        POSE_BACKEND,
         running_mode="image",
         device=device,
         use_gpu=use_gpu,
@@ -126,7 +125,7 @@ def process_image(image_file: str = None):
                 landmarks_entry["landmarks"],
                 landmarks_entry["bbox"],
                 zoom_info,
-                topology=landmarks_entry.get("topology", MEDIAPIPE_33),
+                topology=landmarks_entry.get("topology", COCO_17),
             )
             draw_info_panel(output_frame, analysis)
             log_message(f"姿勢スコア: {analysis['score']}/100")

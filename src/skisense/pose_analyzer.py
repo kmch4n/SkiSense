@@ -2,24 +2,11 @@ import math
 
 import numpy as np
 
-from .pose_topology import MEDIAPIPE_33, PoseTopology
-
-# MediaPipe Pose Landmark indices (kept for backward compatibility; derived
-# from MEDIAPIPE_33 so the authoritative source remains pose_topology.py)
-LEFT_SHOULDER = MEDIAPIPE_33.indices["left_shoulder"]
-RIGHT_SHOULDER = MEDIAPIPE_33.indices["right_shoulder"]
-LEFT_HIP = MEDIAPIPE_33.indices["left_hip"]
-RIGHT_HIP = MEDIAPIPE_33.indices["right_hip"]
-LEFT_KNEE = MEDIAPIPE_33.indices["left_knee"]
-RIGHT_KNEE = MEDIAPIPE_33.indices["right_knee"]
-LEFT_ANKLE = MEDIAPIPE_33.indices["left_ankle"]
-RIGHT_ANKLE = MEDIAPIPE_33.indices["right_ankle"]
-LEFT_FOOT_INDEX = MEDIAPIPE_33.indices["left_foot"]
-RIGHT_FOOT_INDEX = MEDIAPIPE_33.indices["right_foot"]
+from .pose_topology import COCO_17, PoseTopology
 
 # Landmarks commonly occluded in ski poses; re-exported for callers that
 # import this constant directly.
-LEG_LANDMARK_INDICES = MEDIAPIPE_33.leg_indices
+LEG_LANDMARK_INDICES = COCO_17.leg_indices
 
 # Color definitions (BGR format)
 COLORS = {
@@ -159,7 +146,7 @@ def analyze_ski_pose(
     height,
     visibility_threshold: float = 0.5,
     visibility_threshold_legs: float = None,
-    topology: PoseTopology = MEDIAPIPE_33,
+    topology: PoseTopology = COCO_17,
 ):
     """
     Analyze ski posture and return angle measurements.

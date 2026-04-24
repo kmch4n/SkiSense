@@ -8,14 +8,14 @@ Analyzes ski videos to detect and evaluate skiing posture.
 from .config import (
     SHOW_GUI, DEVICE_PREFERENCE,
     MODEL_DIR, INPUT_DIR, OUTPUT_DIR,
-    YOLO_MODEL, POSE_BACKEND,
+    YOLO_MODEL,
     ZOOM_ENABLED, ZOOM_SCALE, ZOOM_SMOOTHING, ZOOM_PADDING,
     YOLO_CONFIDENCE, DEEPSORT_MAX_AGE, DEEPSORT_N_INIT,
     POSE_VISIBILITY_THRESHOLD, POSE_VISIBILITY_THRESHOLD_LEGS,
 )
 from ._logging import DEBUG, SuppressStderr
 from .backends import get_backend
-from .pose_topology import MEDIAPIPE_33, PoseTopology
+from .pose_topology import COCO_17, PoseTopology
 from .zoom_tracker import ZoomTracker
 
 import inspect
@@ -32,7 +32,7 @@ with SuppressStderr():
     import cv2
     from deep_sort_realtime.deepsort_tracker import DeepSort
     from ultralytics import YOLO
-    from .pose_analyzer import LEG_LANDMARK_INDICES, analyze_ski_pose, COLORS
+    from .pose_analyzer import COLORS
 
 
 def log_message(message: str):
@@ -41,20 +41,13 @@ def log_message(message: str):
     print(f"[{timestamp}] {message}")
 
 
-# Module-level alias for backward compatibility. New code should read the
-# skeleton edges from the landmark entry's ``topology`` field.
-POSE_CONNECTIONS = MEDIAPIPE_33.connections
+# Module-level alias for callers that import the active skeleton edges.
+POSE_CONNECTIONS = COCO_17.connections
 
 
-def visibility_threshold_for(index: int) -> float:
-    """Return the visibility threshold that applies to a given MediaPipe
-    landmark index.
-
-    Kept for backward compatibility with callers that assume the MediaPipe
-    topology. Topology-aware callers should use
-    ``pose_topology.visibility_threshold_for`` directly.
-    """
-    if index in LEG_LANDMARK_INDICES:
+def visibility_threshold_for(index: int, topology: PoseTopology = COCO_17) -> float:
+    """Return the visibility threshold that applies to a landmark index."""
+    if index in topology.leg_indices:
         return POSE_VISIBILITY_THRESHOLD_LEGS
     return POSE_VISIBILITY_THRESHOLD
 
@@ -147,7 +140,7 @@ def transform_point_to_zoom(point, bbox, zoom_info):
     return (zoom_x, zoom_y)
 
 
-def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info, topology: PoseTopology = MEDIAPIPE_33):
+def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info, topology: PoseTopology = COCO_17):
     """Draw pose landmarks on a (possibly zoomed) frame.
 
     Args:
@@ -156,7 +149,6 @@ def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info, topology: 
         bbox: (x, y, w, h) padded ROI bbox in original frame coordinates.
         zoom_info: Dict with zoom crop info.
         topology: Pose topology describing skeleton edges and leg indices.
-            Defaults to MediaPipe-33 for backward compatibility.
     """
     h, w = frame.shape[:2]
     bx, by, bw, bh = bbox
@@ -356,11 +348,10 @@ def process_video(video_file: str = None, high_precision: bool = False):
     else:
         log_message("  - Deep SORT: CPU" + (" (MPS not supported)" if DEVICE_STR == "mps" else ""))
 
-    log_message(f"  - Pose backend: {POSE_BACKEND}")
+    log_message("  - Pose: YOLO11-Pose")
     log_message("=" * 40)
 
     pose_backend = get_backend(
-        POSE_BACKEND,
         running_mode="video",
         device=DEVICE,
         use_gpu=USE_CUDA,
@@ -481,7 +472,7 @@ def process_video(video_file: str = None, high_precision: bool = False):
         for data in landmarks_data:
             draw_landmarks_on_zoomed_frame(
                 output_frame, data['landmarks'], data['bbox'], zoom_info,
-                topology=data.get('topology', MEDIAPIPE_33),
+                topology=data.get('topology', COCO_17),
             )
 
         draw_info_panel(output_frame, latest_pose_analysis)
