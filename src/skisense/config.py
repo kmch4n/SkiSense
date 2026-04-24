@@ -102,8 +102,19 @@ FLIP_TTA_ENABLED = _get_bool('SKISENSE_FLIP_TTA_ENABLED', False)  # Run pose est
 # =============================================================================
 # Model Settings
 # =============================================================================
-YOLO_MODEL = "yolov8x.pt"           # YOLOv8 model file
+YOLO_MODEL = "yolov8x.pt"           # YOLOv8 model file (person detection)
 POSE_MODEL = "pose_landmarker.task"  # MediaPipe pose landmarker model
+
+# Pose estimation backend selection
+#   mediapipe: Google MediaPipe Pose Landmarker (33 landmarks, CPU only)
+#   yolo11:    Ultralytics YOLO11-Pose (COCO-17 landmarks, GPU-friendly)
+POSE_BACKEND = _get_str('SKISENSE_POSE_BACKEND', 'mediapipe',
+                         valid_options=['mediapipe', 'yolo11'])
+
+# YOLO11-Pose model filename (used when POSE_BACKEND=yolo11)
+YOLO_POSE_MODEL = _get_str('SKISENSE_YOLO_POSE_MODEL', 'yolo11x-pose.pt')
+YOLO_POSE_CONFIDENCE = _get_float('SKISENSE_YOLO_POSE_CONFIDENCE', 0.25,
+                                   min_val=0.0, max_val=1.0)
 
 # MediaPipe Pose model type selection
 POSE_MODEL_TYPE = _get_str('SKISENSE_POSE_MODEL_TYPE', 'heavy',

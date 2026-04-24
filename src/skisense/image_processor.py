@@ -12,7 +12,7 @@ from datetime import datetime
 import cv2
 
 from .backends import get_backend
-from .config import DEVICE_PREFERENCE, INPUT_DIR, OUTPUT_DIR
+from .config import DEVICE_PREFERENCE, INPUT_DIR, OUTPUT_DIR, POSE_BACKEND
 from .main import (
     draw_bbox_on_zoomed_frame,
     draw_info_panel,
@@ -59,7 +59,7 @@ def process_image(image_file: str = None):
         log_message("  - YOLO: MPS GPU (half=False)")
     else:
         log_message("  - YOLO: CPU")
-    log_message("  - Pose backend: MediaPipe (IMAGE mode)")
+    log_message(f"  - Pose backend: {POSE_BACKEND}")
     log_message("=" * 40)
 
     image_path = os.path.join(INPUT_DIR, image_file)
@@ -82,7 +82,13 @@ def process_image(image_file: str = None):
     input_copy_path = os.path.join(output_dir, "image.jpg")
     shutil.copy2(image_path, input_copy_path)
 
-    pose_backend = get_backend("mediapipe", running_mode="image")
+    pose_backend = get_backend(
+        POSE_BACKEND,
+        running_mode="image",
+        device=device,
+        use_gpu=use_gpu,
+        device_str=device_str,
+    )
     yolo_model = load_yolo_model(device, use_gpu)
 
     if device_str == "cuda":

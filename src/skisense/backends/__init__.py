@@ -36,6 +36,10 @@ def get_backend(
         from .mediapipe_backend import MediaPipeBackend
         return MediaPipeBackend(running_mode=running_mode)
 
+    if name == "yolo11":
+        from .yolo11_backend import Yolo11Backend
+        return Yolo11Backend(device=device, use_gpu=use_gpu, device_str=device_str)
+
     raise ValueError(f"Unknown pose backend: {name!r}")
 
 

@@ -8,7 +8,7 @@ Analyzes ski videos to detect and evaluate skiing posture.
 from .config import (
     SHOW_GUI, DEVICE_PREFERENCE,
     MODEL_DIR, INPUT_DIR, OUTPUT_DIR,
-    YOLO_MODEL,
+    YOLO_MODEL, POSE_BACKEND,
     ZOOM_ENABLED, ZOOM_SCALE, ZOOM_SMOOTHING, ZOOM_PADDING,
     YOLO_CONFIDENCE, DEEPSORT_MAX_AGE, DEEPSORT_N_INIT,
     POSE_VISIBILITY_THRESHOLD, POSE_VISIBILITY_THRESHOLD_LEGS,
@@ -356,10 +356,16 @@ def process_video(video_file: str = None, high_precision: bool = False):
     else:
         log_message("  - Deep SORT: CPU" + (" (MPS not supported)" if DEVICE_STR == "mps" else ""))
 
-    log_message("  - MediaPipe: CPU")
+    log_message(f"  - Pose backend: {POSE_BACKEND}")
     log_message("=" * 40)
 
-    pose_backend = get_backend("mediapipe", running_mode="video")
+    pose_backend = get_backend(
+        POSE_BACKEND,
+        running_mode="video",
+        device=DEVICE,
+        use_gpu=USE_CUDA,
+        device_str=DEVICE_STR,
+    )
 
     video_path = os.path.join(INPUT_DIR, video_file)
     cap = cv2.VideoCapture(video_path)
