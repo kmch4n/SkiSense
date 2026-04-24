@@ -1,27 +1,25 @@
-import numpy as np
 import math
 
-# MediaPipe Pose Landmark indices
-LEFT_SHOULDER = 11
-RIGHT_SHOULDER = 12
-LEFT_HIP = 23
-RIGHT_HIP = 24
-LEFT_KNEE = 25
-RIGHT_KNEE = 26
-LEFT_ANKLE = 27
-RIGHT_ANKLE = 28
-LEFT_FOOT_INDEX = 31
-RIGHT_FOOT_INDEX = 32
+import numpy as np
 
-# Landmarks that belong to the lower body and are commonly occluded in ski poses.
-# These use a looser visibility threshold when evaluating joint angles.
-LEG_LANDMARK_INDICES = frozenset({
-    LEFT_HIP, RIGHT_HIP,
-    LEFT_KNEE, RIGHT_KNEE,
-    LEFT_ANKLE, RIGHT_ANKLE,
-    29, 30,  # left/right heel
-    LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX,
-})
+from .pose_topology import MEDIAPIPE_33, PoseTopology
+
+# MediaPipe Pose Landmark indices (kept for backward compatibility; derived
+# from MEDIAPIPE_33 so the authoritative source remains pose_topology.py)
+LEFT_SHOULDER = MEDIAPIPE_33.indices["left_shoulder"]
+RIGHT_SHOULDER = MEDIAPIPE_33.indices["right_shoulder"]
+LEFT_HIP = MEDIAPIPE_33.indices["left_hip"]
+RIGHT_HIP = MEDIAPIPE_33.indices["right_hip"]
+LEFT_KNEE = MEDIAPIPE_33.indices["left_knee"]
+RIGHT_KNEE = MEDIAPIPE_33.indices["right_knee"]
+LEFT_ANKLE = MEDIAPIPE_33.indices["left_ankle"]
+RIGHT_ANKLE = MEDIAPIPE_33.indices["right_ankle"]
+LEFT_FOOT_INDEX = MEDIAPIPE_33.indices["left_foot"]
+RIGHT_FOOT_INDEX = MEDIAPIPE_33.indices["right_foot"]
+
+# Landmarks commonly occluded in ski poses; re-exported for callers that
+# import this constant directly.
+LEG_LANDMARK_INDICES = MEDIAPIPE_33.leg_indices
 
 # Color definitions (BGR format)
 COLORS = {
@@ -161,67 +159,102 @@ def analyze_ski_pose(
     height,
     visibility_threshold: float = 0.5,
     visibility_threshold_legs: float = None,
+    topology: PoseTopology = MEDIAPIPE_33,
 ):
     """
-    Analyze ski posture and return angle measurements
+    Analyze ski posture and return angle measurements.
 
     Parameters:
-        landmarks: List of pose landmarks from MediaPipe
+        landmarks: List of pose landmarks from a backend
         width: ROI width
         height: ROI height
         visibility_threshold: Minimum visibility for upper-body landmarks
         visibility_threshold_legs: Minimum visibility for leg landmarks.
             Falls back to ``visibility_threshold`` when None.
+        topology: Pose topology describing the landmark layout. Determines
+            which indices to sample and whether ankle angle evaluation is
+            possible (requires ``topology.has_foot``).
 
     Returns:
-        dict with analysis results
+        dict with angles / evaluations / score / shoulder_center
     """
-    if len(landmarks) < 33:
+    if len(landmarks) < topology.num_landmarks:
         return None
 
     if visibility_threshold_legs is None:
         visibility_threshold_legs = visibility_threshold
 
+    idx = topology.indices
+    leg_indices = topology.leg_indices
+
     results = {
         'angles': {},
         'evaluations': {},
-        'score': 0
+        'score': 0,
     }
 
     try:
-        # Get landmark points
-        left_shoulder = get_landmark_point(landmarks, LEFT_SHOULDER, width, height)
-        right_shoulder = get_landmark_point(landmarks, RIGHT_SHOULDER, width, height)
-        left_hip = get_landmark_point(landmarks, LEFT_HIP, width, height)
-        right_hip = get_landmark_point(landmarks, RIGHT_HIP, width, height)
-        left_knee = get_landmark_point(landmarks, LEFT_KNEE, width, height)
-        right_knee = get_landmark_point(landmarks, RIGHT_KNEE, width, height)
-        left_ankle = get_landmark_point(landmarks, LEFT_ANKLE, width, height)
-        right_ankle = get_landmark_point(landmarks, RIGHT_ANKLE, width, height)
-        left_foot = get_landmark_point(landmarks, LEFT_FOOT_INDEX, width, height)
-        right_foot = get_landmark_point(landmarks, RIGHT_FOOT_INDEX, width, height)
+        left_shoulder = get_landmark_point(landmarks, idx["left_shoulder"], width, height)
+        right_shoulder = get_landmark_point(landmarks, idx["right_shoulder"], width, height)
+        left_hip = get_landmark_point(landmarks, idx["left_hip"], width, height)
+        right_hip = get_landmark_point(landmarks, idx["right_hip"], width, height)
+        left_knee = get_landmark_point(landmarks, idx["left_knee"], width, height)
+        right_knee = get_landmark_point(landmarks, idx["right_knee"], width, height)
+        left_ankle = get_landmark_point(landmarks, idx["left_ankle"], width, height)
+        right_ankle = get_landmark_point(landmarks, idx["right_ankle"], width, height)
 
-        # Helper to check visibility using a looser threshold on leg landmarks.
+        if topology.has_foot:
+            left_foot = get_landmark_point(landmarks, idx["left_foot"], width, height)
+            right_foot = get_landmark_point(landmarks, idx["right_foot"], width, height)
+        else:
+            left_foot = None
+            right_foot = None
+
         def _visible(*indices: int) -> bool:
             for i in indices:
                 threshold = (
-                    visibility_threshold_legs if i in LEG_LANDMARK_INDICES
+                    visibility_threshold_legs if i in leg_indices
                     else visibility_threshold
                 )
                 if not is_landmark_visible(landmarks, i, threshold):
                     return False
             return True
 
-        # Calculate angles (only when all required landmarks are visible)
-        left_knee_angle = calculate_angle(left_hip, left_knee, left_ankle) if _visible(LEFT_HIP, LEFT_KNEE, LEFT_ANKLE) else None
-        right_knee_angle = calculate_angle(right_hip, right_knee, right_ankle) if _visible(RIGHT_HIP, RIGHT_KNEE, RIGHT_ANKLE) else None
-        left_hip_angle = calculate_angle(left_shoulder, left_hip, left_knee) if _visible(LEFT_SHOULDER, LEFT_HIP, LEFT_KNEE) else None
-        right_hip_angle = calculate_angle(right_shoulder, right_hip, right_knee) if _visible(RIGHT_SHOULDER, RIGHT_HIP, RIGHT_KNEE) else None
-        shoulder_tilt = calculate_horizontal_angle(left_shoulder, right_shoulder) if _visible(LEFT_SHOULDER, RIGHT_SHOULDER) else None
-        left_ankle_angle = calculate_angle(left_knee, left_ankle, left_foot) if _visible(LEFT_KNEE, LEFT_ANKLE, LEFT_FOOT_INDEX) else None
-        right_ankle_angle = calculate_angle(right_knee, right_ankle, right_foot) if _visible(RIGHT_KNEE, RIGHT_ANKLE, RIGHT_FOOT_INDEX) else None
+        left_knee_angle = (
+            calculate_angle(left_hip, left_knee, left_ankle)
+            if _visible(idx["left_hip"], idx["left_knee"], idx["left_ankle"]) else None
+        )
+        right_knee_angle = (
+            calculate_angle(right_hip, right_knee, right_ankle)
+            if _visible(idx["right_hip"], idx["right_knee"], idx["right_ankle"]) else None
+        )
+        left_hip_angle = (
+            calculate_angle(left_shoulder, left_hip, left_knee)
+            if _visible(idx["left_shoulder"], idx["left_hip"], idx["left_knee"]) else None
+        )
+        right_hip_angle = (
+            calculate_angle(right_shoulder, right_hip, right_knee)
+            if _visible(idx["right_shoulder"], idx["right_hip"], idx["right_knee"]) else None
+        )
+        shoulder_tilt = (
+            calculate_horizontal_angle(left_shoulder, right_shoulder)
+            if _visible(idx["left_shoulder"], idx["right_shoulder"]) else None
+        )
 
-        # Store angles (use 0.0 for display when not available)
+        if topology.has_foot:
+            left_ankle_angle = (
+                calculate_angle(left_knee, left_ankle, left_foot)
+                if _visible(idx["left_knee"], idx["left_ankle"], idx["left_foot"]) else None
+            )
+            right_ankle_angle = (
+                calculate_angle(right_knee, right_ankle, right_foot)
+                if _visible(idx["right_knee"], idx["right_ankle"], idx["right_foot"]) else None
+            )
+        else:
+            # Topology has no foot landmark; ankle-angle scoring is unavailable.
+            left_ankle_angle = None
+            right_ankle_angle = None
+
         results['angles'] = {
             'left_knee': left_knee_angle if left_knee_angle is not None else 0.0,
             'right_knee': right_knee_angle if right_knee_angle is not None else 0.0,
@@ -229,85 +262,42 @@ def analyze_ski_pose(
             'right_hip': right_hip_angle if right_hip_angle is not None else 0.0,
             'shoulder_tilt': shoulder_tilt if shoulder_tilt is not None else 0.0,
             'left_ankle': left_ankle_angle if left_ankle_angle is not None else 0.0,
-            'right_ankle': right_ankle_angle if right_ankle_angle is not None else 0.0
+            'right_ankle': right_ankle_angle if right_ankle_angle is not None else 0.0,
         }
 
-        # Evaluate each angle (skip from scoring if landmarks not visible)
         evaluations = {}
         score_total = 0
         score_count = 0
 
-        # Knee evaluations
-        if left_knee_angle is not None:
-            status, label = evaluate_knee_angle(left_knee_angle)
-            evaluations['left_knee'] = {'status': status, 'label': label}
-            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-            score_count += 1
-        else:
-            evaluations['left_knee'] = {'status': 'info', 'label': 'N/A'}
+        def _grade(angle_value, evaluator_fn, key):
+            nonlocal score_total, score_count
+            if angle_value is not None:
+                status, label = evaluator_fn(angle_value)
+                evaluations[key] = {'status': status, 'label': label}
+                score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
+                score_count += 1
+            else:
+                evaluations[key] = {'status': 'info', 'label': 'N/A'}
 
-        if right_knee_angle is not None:
-            status, label = evaluate_knee_angle(right_knee_angle)
-            evaluations['right_knee'] = {'status': status, 'label': label}
-            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-            score_count += 1
-        else:
-            evaluations['right_knee'] = {'status': 'info', 'label': 'N/A'}
-
-        # Hip evaluations
-        if left_hip_angle is not None:
-            status, label = evaluate_hip_angle(left_hip_angle)
-            evaluations['left_hip'] = {'status': status, 'label': label}
-            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-            score_count += 1
-        else:
-            evaluations['left_hip'] = {'status': 'info', 'label': 'N/A'}
-
-        if right_hip_angle is not None:
-            status, label = evaluate_hip_angle(right_hip_angle)
-            evaluations['right_hip'] = {'status': status, 'label': label}
-            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-            score_count += 1
-        else:
-            evaluations['right_hip'] = {'status': 'info', 'label': 'N/A'}
-
-        # Shoulder tilt evaluation
-        if shoulder_tilt is not None:
-            status, label = evaluate_shoulder_tilt(shoulder_tilt)
-            evaluations['shoulder_tilt'] = {'status': status, 'label': label}
-            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-            score_count += 1
-        else:
-            evaluations['shoulder_tilt'] = {'status': 'info', 'label': 'N/A'}
-
-        # Ankle evaluations
-        if left_ankle_angle is not None:
-            status, label = evaluate_ankle_angle(left_ankle_angle)
-            evaluations['left_ankle'] = {'status': status, 'label': label}
-            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-            score_count += 1
-        else:
-            evaluations['left_ankle'] = {'status': 'info', 'label': 'N/A'}
-
-        if right_ankle_angle is not None:
-            status, label = evaluate_ankle_angle(right_ankle_angle)
-            evaluations['right_ankle'] = {'status': status, 'label': label}
-            score_total += 100 if status == 'good' else (50 if status == 'warning' else 0)
-            score_count += 1
-        else:
-            evaluations['right_ankle'] = {'status': 'info', 'label': 'N/A'}
+        _grade(left_knee_angle, evaluate_knee_angle, 'left_knee')
+        _grade(right_knee_angle, evaluate_knee_angle, 'right_knee')
+        _grade(left_hip_angle, evaluate_hip_angle, 'left_hip')
+        _grade(right_hip_angle, evaluate_hip_angle, 'right_hip')
+        _grade(shoulder_tilt, evaluate_shoulder_tilt, 'shoulder_tilt')
+        _grade(left_ankle_angle, evaluate_ankle_angle, 'left_ankle')
+        _grade(right_ankle_angle, evaluate_ankle_angle, 'right_ankle')
 
         results['evaluations'] = evaluations
         results['score'] = int(score_total / score_count) if score_count > 0 else 0
 
-        # Calculate shoulder center (for zoom centering)
+        # Shoulder center is used for zoom centering
         shoulder_center = (
             (left_shoulder[0] + right_shoulder[0]) / 2,
-            (left_shoulder[1] + right_shoulder[1]) / 2
+            (left_shoulder[1] + right_shoulder[1]) / 2,
         )
         results['shoulder_center'] = shoulder_center
 
-    except Exception as e:
+    except Exception:
         return None
 
     return results

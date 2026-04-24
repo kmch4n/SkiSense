@@ -15,6 +15,8 @@ from .config import (
     POSE_VISIBILITY_THRESHOLD, POSE_VISIBILITY_THRESHOLD_LEGS,
     ROI_PADDING_RATIO, CLAHE_ENABLED, FLIP_TTA_ENABLED,
 )
+from .pose_topology import MEDIAPIPE_33, build_flip_swap_table
+from .preprocessing import apply_clahe
 from .zoom_tracker import ZoomTracker
 
 # =============================================================================
@@ -113,55 +115,21 @@ def log_message(message: str):
     print(f"[{timestamp}] {message}")
 
 
-# Pose connections (33 landmarks)
-POSE_CONNECTIONS = [
-    (0, 1), (1, 2), (2, 3), (3, 7), (0, 4), (4, 5), (5, 6), (6, 8),
-    (9, 10), (11, 12), (11, 13), (13, 15), (15, 17), (15, 19), (15, 21),
-    (17, 19), (12, 14), (14, 16), (16, 18), (16, 20), (16, 22), (18, 20),
-    (11, 23), (12, 24), (23, 24), (23, 25), (24, 26), (25, 27), (26, 28),
-    (27, 29), (28, 30), (29, 31), (30, 32), (27, 31), (28, 32)
-]
+# Pose connections kept as a module alias so external callers still see it.
+POSE_CONNECTIONS = MEDIAPIPE_33.connections
 
-# MediaPipe 33-landmark left/right pairs used to unflip horizontally-flipped
-# landmark output back into the original orientation for Flip TTA.
-_MEDIAPIPE_LR_PAIRS = [
-    (1, 4), (2, 5), (3, 6), (7, 8), (9, 10), (11, 12), (13, 14), (15, 16),
-    (17, 18), (19, 20), (21, 22), (23, 24), (25, 26), (27, 28), (29, 30),
-    (31, 32),
-]
-
-
-def _build_flip_swap_table(num_landmarks: int = 33):
-    """Build an index map so ``table[i]`` returns the landmark whose flipped
-    counterpart ends up at position ``i`` in the original orientation."""
-    table = list(range(num_landmarks))
-    for a, b in _MEDIAPIPE_LR_PAIRS:
-        table[a], table[b] = b, a
-    return table
-
-
-_FLIP_SWAP_TABLE = _build_flip_swap_table()
+_FLIP_SWAP_TABLE = build_flip_swap_table(MEDIAPIPE_33)
 
 
 def visibility_threshold_for(index: int) -> float:
-    """Return the visibility threshold that applies to a given landmark index."""
+    """Return the visibility threshold that applies to a given landmark index.
+
+    Thin wrapper around the topology-aware helper in ``pose_topology`` that
+    uses the project-wide MediaPipe thresholds.
+    """
     if index in LEG_LANDMARK_INDICES:
         return POSE_VISIBILITY_THRESHOLD_LEGS
     return POSE_VISIBILITY_THRESHOLD
-
-
-def apply_clahe(bgr_image, clip_limit: float = 2.0, tile_grid_size=(8, 8)):
-    """Apply CLAHE on the L channel of a BGR image and return a BGR image.
-
-    Boosts local contrast on low-contrast scenes (e.g. snow backgrounds)
-    without distorting colour balance.
-    """
-    lab = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2LAB)
-    l_channel, a_channel, b_channel = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-    l_channel = clahe.apply(l_channel)
-    lab = cv2.merge((l_channel, a_channel, b_channel))
-    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
 
 class _MergedLandmark:
