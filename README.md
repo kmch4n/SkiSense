@@ -46,11 +46,32 @@
 | 技術 | 役割 | 採用理由 |
 |------|------|---------|
 | [YOLOv8x](https://github.com/ultralytics/ultralytics) | 人物検出 | 高精度で複数人シーンでも安定。Ultralytics が公開する学習済みモデルを使用 |
-| [MediaPipe Pose Landmarker (heavy)](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker) | 骨格推定 | 33 点のランドマークで関節角度計算に十分な精度。重量モデルを優先採用 |
+| [MediaPipe Pose Landmarker (heavy)](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker) | 骨格推定（既定） | 33 点のランドマークで関節角度計算に十分な精度。重量モデルを優先採用 |
+| [YOLO11-Pose](https://docs.ultralytics.com/tasks/pose/) | 骨格推定（代替） | COCO-17 キーポイント。遮蔽や極端な姿勢に MediaPipe より強い。GPU 推論に統一可能 |
 | [Deep SORT](https://github.com/nwojke/deep_sort) | トラッキング | フレーム間で検出された人物に一貫した ID を付与 |
 | [OpenCV](https://opencv.org/) | 動画入出力・描画 | 業界標準の CV ライブラリ |
 | [PyTorch](https://pytorch.org/) | DL バックエンド | CUDA / MPS / CPU の統一 API |
 | python-dotenv | 設定管理 | 設定値をコードから分離し、環境別の切替を容易にする |
+
+### バックエンド切替
+
+骨格推定バックエンドは環境変数 `SKISENSE_POSE_BACKEND` で切替可能。
+
+| バックエンド | ランドマーク数 | デバイス | 足首角度評価 | 想定用途 |
+|---|---|---|---|---|
+| `mediapipe`（既定） | 33 点 | CPU のみ | 可 | ノート PC / 軽量セットアップ。フラットな姿勢に強い |
+| `yolo11` | COCO-17 点 | CUDA / MPS / CPU | **N/A**（COCO-17 に足先なし） | GPU 利用可能環境。基礎スキーの深い内傾姿勢など遮蔽の強い画像に推奨 |
+
+切替手順:
+
+```bash
+# .env に追記
+SKISENSE_POSE_BACKEND=yolo11
+SKISENSE_YOLO_POSE_MODEL=yolo11x-pose.pt      # lite 版は yolo11n-pose.pt
+SKISENSE_YOLO_POSE_CONFIDENCE=0.25
+```
+
+初回実行時に `yolo11x-pose.pt`（約 118MB）が Ultralytics から自動ダウンロードされる。COCO-17 トポロジには足先ランドマークが存在しないため、足首角度スコアは `N/A` として総合スコアから除外される仕様。
 
 ---
 
@@ -61,15 +82,17 @@
 フレーム単位で以下の 3 ステップを順に実行する。
 
 1. **検出・トラッキング** — YOLOv8 で人物を検出し、Deep SORT により持続的な ID を割り当てる
-2. **骨格推定** — 検出領域（ROI）をクロップし、MediaPipe で骨格推定を行ったうえで `pose_analyzer` にて関節角度を評価する
+2. **骨格推定** — 検出領域（ROI）をクロップし、選択中のバックエンド（MediaPipe または YOLO11-Pose）で骨格推定を行ったうえで `pose_analyzer` にて関節角度を評価する
 3. **描画** — ZoomTracker によるズーム変換を適用し、骨格線と bbox を描画、最後に情報パネル（スコア・角度）を重ねる
 
 ### モジュール構成
 
 - **`config.py`** — `.env` から全設定を読み込み、型変換とバリデーションを行う
+- **`pose_topology.py`** — バックエンドごとのランドマーク構造（MediaPipe 33 / COCO-17）を定義し、描画・評価を topology 非依存にする
+- **`backends/`** — 骨格推定バックエンド。`PoseBackend` ABC と MediaPipe / YOLO11 実装を内包し、`get_backend()` で切替
 - **`pose_analyzer.py`** — 純粋関数による関節角度の計算と評価。副作用・I/O なし
 - **`zoom_tracker.py`** — EMA スムージングによる滑走者追尾。検出タイムアウト 30 フレーム
-- **`main.py`** — オーケストレーション。デバイス解決、モデル初期化、フレームループ、動画 I/O
+- **`main.py`** — オーケストレーション。デバイス解決、バックエンド取得、フレームループ、動画 I/O
 
 ### デバイス解決ロジック
 
