@@ -91,8 +91,13 @@ DEEPSORT_N_INIT = _get_int('SKISENSE_DEEPSORT_N_INIT', 1, min_val=1)           #
 POSE_PRESENCE_CONF = _get_float('SKISENSE_POSE_PRESENCE_CONF', 0.3, min_val=0.0, max_val=1.0)      # MediaPipe pose presence confidence
 POSE_TRACKING_CONF = _get_float('SKISENSE_POSE_TRACKING_CONF', 0.3, min_val=0.0, max_val=1.0)      # MediaPipe pose tracking confidence
 POSE_DETECTION_CONFIDENCE = _get_float('SKISENSE_POSE_DETECTION_CONFIDENCE', 0.5, min_val=0.0, max_val=1.0)  # MediaPipe pose detection confidence
-POSE_VISIBILITY_THRESHOLD = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD', 0.5, min_val=0.0, max_val=1.0)  # Minimum landmark visibility to draw/use
-ROI_PADDING_RATIO = _get_float('SKISENSE_ROI_PADDING', 0.2, min_val=0.0, max_val=1.0)  # ROI bbox expansion ratio for better pose accuracy
+POSE_VISIBILITY_THRESHOLD = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD', 0.5, min_val=0.0, max_val=1.0)  # Minimum landmark visibility for upper-body joints
+POSE_VISIBILITY_THRESHOLD_LEGS = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD_LEGS', 0.3, min_val=0.0, max_val=1.0)  # Looser threshold for leg joints (often occluded in ski poses)
+ROI_PADDING_RATIO = _get_float('SKISENSE_ROI_PADDING', 0.3, min_val=0.0, max_val=1.0)  # ROI bbox expansion ratio for better pose accuracy
+
+# Preprocessing / TTA toggles (opt-in, validated as often harmful on our ski footage)
+CLAHE_ENABLED = _get_bool('SKISENSE_CLAHE_ENABLED', False)  # Apply CLAHE to ROI before pose estimation (left opt-in after testing showed it amplifies snow noise)
+FLIP_TTA_ENABLED = _get_bool('SKISENSE_FLIP_TTA_ENABLED', False)  # Run pose estimation on horizontal flip too and pick best-visibility landmarks (doubles inference cost)
 
 # =============================================================================
 # Model Settings
@@ -101,7 +106,7 @@ YOLO_MODEL = "yolov8x.pt"           # YOLOv8 model file
 POSE_MODEL = "pose_landmarker.task"  # MediaPipe pose landmarker model
 
 # MediaPipe Pose model type selection
-POSE_MODEL_TYPE = _get_str('SKISENSE_POSE_MODEL_TYPE', 'full',
+POSE_MODEL_TYPE = _get_str('SKISENSE_POSE_MODEL_TYPE', 'heavy',
                             valid_options=['lite', 'full', 'heavy'])  # lite: fast/low accuracy, full: balanced, heavy: slow/high accuracy
 
 # Model download URL (dynamically generated based on POSE_MODEL_TYPE)

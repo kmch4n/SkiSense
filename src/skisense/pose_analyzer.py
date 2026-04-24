@@ -13,6 +13,16 @@ RIGHT_ANKLE = 28
 LEFT_FOOT_INDEX = 31
 RIGHT_FOOT_INDEX = 32
 
+# Landmarks that belong to the lower body and are commonly occluded in ski poses.
+# These use a looser visibility threshold when evaluating joint angles.
+LEG_LANDMARK_INDICES = frozenset({
+    LEFT_HIP, RIGHT_HIP,
+    LEFT_KNEE, RIGHT_KNEE,
+    LEFT_ANKLE, RIGHT_ANKLE,
+    29, 30,  # left/right heel
+    LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX,
+})
+
 # Color definitions (BGR format)
 COLORS = {
     'good': (0, 255, 0),      # Green
@@ -145,7 +155,13 @@ def evaluate_ankle_angle(angle):
         return 'bad', "Fix"
 
 
-def analyze_ski_pose(landmarks, width, height, visibility_threshold: float = 0.5):
+def analyze_ski_pose(
+    landmarks,
+    width,
+    height,
+    visibility_threshold: float = 0.5,
+    visibility_threshold_legs: float = None,
+):
     """
     Analyze ski posture and return angle measurements
 
@@ -153,13 +169,18 @@ def analyze_ski_pose(landmarks, width, height, visibility_threshold: float = 0.5
         landmarks: List of pose landmarks from MediaPipe
         width: ROI width
         height: ROI height
-        visibility_threshold: Minimum visibility to trust a landmark
+        visibility_threshold: Minimum visibility for upper-body landmarks
+        visibility_threshold_legs: Minimum visibility for leg landmarks.
+            Falls back to ``visibility_threshold`` when None.
 
     Returns:
         dict with analysis results
     """
     if len(landmarks) < 33:
         return None
+
+    if visibility_threshold_legs is None:
+        visibility_threshold_legs = visibility_threshold
 
     results = {
         'angles': {},
@@ -180,9 +201,16 @@ def analyze_ski_pose(landmarks, width, height, visibility_threshold: float = 0.5
         left_foot = get_landmark_point(landmarks, LEFT_FOOT_INDEX, width, height)
         right_foot = get_landmark_point(landmarks, RIGHT_FOOT_INDEX, width, height)
 
-        # Helper to check visibility of landmarks by indices
+        # Helper to check visibility using a looser threshold on leg landmarks.
         def _visible(*indices: int) -> bool:
-            return all(is_landmark_visible(landmarks, i, visibility_threshold) for i in indices)
+            for i in indices:
+                threshold = (
+                    visibility_threshold_legs if i in LEG_LANDMARK_INDICES
+                    else visibility_threshold
+                )
+                if not is_landmark_visible(landmarks, i, threshold):
+                    return False
+            return True
 
         # Calculate angles (only when all required landmarks are visible)
         left_knee_angle = calculate_angle(left_hip, left_knee, left_ankle) if _visible(LEFT_HIP, LEFT_KNEE, LEFT_ANKLE) else None

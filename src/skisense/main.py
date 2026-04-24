@@ -12,7 +12,8 @@ from .config import (
     ZOOM_ENABLED, ZOOM_SCALE, ZOOM_SMOOTHING, ZOOM_PADDING,
     YOLO_CONFIDENCE, DEEPSORT_MAX_AGE, DEEPSORT_N_INIT,
     POSE_PRESENCE_CONF, POSE_TRACKING_CONF, POSE_DETECTION_CONFIDENCE,
-    POSE_VISIBILITY_THRESHOLD, ROI_PADDING_RATIO
+    POSE_VISIBILITY_THRESHOLD, POSE_VISIBILITY_THRESHOLD_LEGS,
+    ROI_PADDING_RATIO, CLAHE_ENABLED, FLIP_TTA_ENABLED,
 )
 from .zoom_tracker import ZoomTracker
 
@@ -92,7 +93,7 @@ if not DEBUG:
         import cv2
         from deep_sort_realtime.deepsort_tracker import DeepSort
         from ultralytics import YOLO
-        from .pose_analyzer import analyze_ski_pose, COLORS
+        from .pose_analyzer import LEG_LANDMARK_INDICES, analyze_ski_pose, COLORS
         import mediapipe as mp
         from mediapipe.tasks import python
         from mediapipe.tasks.python import vision
@@ -120,6 +121,93 @@ POSE_CONNECTIONS = [
     (11, 23), (12, 24), (23, 24), (23, 25), (24, 26), (25, 27), (26, 28),
     (27, 29), (28, 30), (29, 31), (30, 32), (27, 31), (28, 32)
 ]
+
+# MediaPipe 33-landmark left/right pairs used to unflip horizontally-flipped
+# landmark output back into the original orientation for Flip TTA.
+_MEDIAPIPE_LR_PAIRS = [
+    (1, 4), (2, 5), (3, 6), (7, 8), (9, 10), (11, 12), (13, 14), (15, 16),
+    (17, 18), (19, 20), (21, 22), (23, 24), (25, 26), (27, 28), (29, 30),
+    (31, 32),
+]
+
+
+def _build_flip_swap_table(num_landmarks: int = 33):
+    """Build an index map so ``table[i]`` returns the landmark whose flipped
+    counterpart ends up at position ``i`` in the original orientation."""
+    table = list(range(num_landmarks))
+    for a, b in _MEDIAPIPE_LR_PAIRS:
+        table[a], table[b] = b, a
+    return table
+
+
+_FLIP_SWAP_TABLE = _build_flip_swap_table()
+
+
+def visibility_threshold_for(index: int) -> float:
+    """Return the visibility threshold that applies to a given landmark index."""
+    if index in LEG_LANDMARK_INDICES:
+        return POSE_VISIBILITY_THRESHOLD_LEGS
+    return POSE_VISIBILITY_THRESHOLD
+
+
+def apply_clahe(bgr_image, clip_limit: float = 2.0, tile_grid_size=(8, 8)):
+    """Apply CLAHE on the L channel of a BGR image and return a BGR image.
+
+    Boosts local contrast on low-contrast scenes (e.g. snow backgrounds)
+    without distorting colour balance.
+    """
+    lab = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+    l_channel = clahe.apply(l_channel)
+    lab = cv2.merge((l_channel, a_channel, b_channel))
+    return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+
+class _MergedLandmark:
+    """Minimal landmark shim used when merging Flip TTA results.
+
+    Mirrors the attributes of MediaPipe's ``NormalizedLandmark`` that the rest
+    of the pipeline reads: ``x``, ``y``, ``z``, ``visibility``, ``presence``.
+    """
+    __slots__ = ("x", "y", "z", "visibility", "presence")
+
+    def __init__(self, x, y, z, visibility, presence):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.visibility = visibility
+        self.presence = presence
+
+
+def _merge_flipped_landmarks(landmarks_orig, landmarks_flipped):
+    """Merge original and (still-in-flipped-orientation) landmarks.
+
+    For each output index ``i`` the flipped result is first unflipped
+    (swap left/right indices, mirror x), then the landmark with the higher
+    visibility is kept. This preserves information from occluded limbs that
+    become visible under horizontal flip.
+    """
+    merged = []
+    for i in range(len(landmarks_orig)):
+        orig = landmarks_orig[i]
+        flipped_src = landmarks_flipped[_FLIP_SWAP_TABLE[i]]
+        unflipped = _MergedLandmark(
+            x=1.0 - flipped_src.x,
+            y=flipped_src.y,
+            z=getattr(flipped_src, "z", 0.0),
+            visibility=flipped_src.visibility,
+            presence=getattr(flipped_src, "presence", 0.0),
+        )
+        if unflipped.visibility > orig.visibility:
+            merged.append(unflipped)
+        else:
+            merged.append(_MergedLandmark(
+                x=orig.x, y=orig.y, z=getattr(orig, "z", 0.0),
+                visibility=orig.visibility,
+                presence=getattr(orig, "presence", 0.0),
+            ))
+    return merged
 
 
 def resolve_device(preference: str):
@@ -240,8 +328,9 @@ def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info):
             start_lm = landmarks[start_idx]
             end_lm = landmarks[end_idx]
 
-            # Skip if either landmark has low visibility
-            if start_lm.visibility < POSE_VISIBILITY_THRESHOLD or end_lm.visibility < POSE_VISIBILITY_THRESHOLD:
+            # Skip if either endpoint falls below its per-joint visibility threshold
+            if (start_lm.visibility < visibility_threshold_for(start_idx)
+                    or end_lm.visibility < visibility_threshold_for(end_idx)):
                 continue
 
             # Get ROI coordinates
@@ -258,8 +347,8 @@ def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info):
                 cv2.line(frame, start_point, end_point, (0, 255, 0), 2)
 
     # Draw landmarks (skip low-visibility)
-    for landmark in landmarks:
-        if landmark.visibility < POSE_VISIBILITY_THRESHOLD:
+    for idx, landmark in enumerate(landmarks):
+        if landmark.visibility < visibility_threshold_for(idx):
             continue
 
         roi_point = (landmark.x * bw, landmark.y * bh)
@@ -487,6 +576,8 @@ def estimate_pose_for_bbox(
 
     Returns:
         (landmarks_entry, analysis) tuple, each may be None on failure.
+        landmarks_entry is a dict {'landmarks', 'bbox', 'shoulder_center'}
+        with bbox expanded by ROI_PADDING_RATIO.
     """
     x, y, w, h = bbox
     pad_w = int(w * ROI_PADDING_RATIO)
@@ -497,38 +588,59 @@ def estimate_pose_for_bbox(
     ph = min(frame_height, y + h + pad_h) - py
 
     roi = frame[py:py + ph, px:px + pw]
+    if CLAHE_ENABLED:
+        roi = apply_clahe(roi)
     roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=roi_rgb)
 
-    if running_mode == vision.RunningMode.VIDEO:
-        if not DEBUG:
-            with SuppressStderr():
-                detection_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
-        else:
-            detection_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
-    else:
-        if not DEBUG:
-            with SuppressStderr():
-                detection_result = pose_landmarker.detect(mp_image)
-        else:
-            detection_result = pose_landmarker.detect(mp_image)
-
-    if not detection_result.pose_landmarks:
+    primary_result = _run_pose_landmarker(
+        pose_landmarker, roi_rgb, running_mode, timestamp_ms,
+    )
+    if not primary_result.pose_landmarks:
         return None, None
+
+    landmarks = primary_result.pose_landmarks[0]
+
+    # Flip TTA is only applied to still-image mode because the stateful VIDEO
+    # pipeline relies on monotonic timestamps and a single input per step.
+    if FLIP_TTA_ENABLED and running_mode == vision.RunningMode.IMAGE:
+        flipped_roi_rgb = cv2.flip(roi_rgb, 1)
+        flipped_result = _run_pose_landmarker(
+            pose_landmarker, flipped_roi_rgb, running_mode, timestamp_ms,
+        )
+        if flipped_result.pose_landmarks:
+            landmarks = _merge_flipped_landmarks(landmarks, flipped_result.pose_landmarks[0])
 
     roi_h, roi_w = roi_rgb.shape[:2]
     analysis = analyze_ski_pose(
-        detection_result.pose_landmarks[0], roi_w, roi_h, POSE_VISIBILITY_THRESHOLD,
+        landmarks, roi_w, roi_h,
+        visibility_threshold=POSE_VISIBILITY_THRESHOLD,
+        visibility_threshold_legs=POSE_VISIBILITY_THRESHOLD_LEGS,
     )
     if not analysis:
         return None, None
 
     entry = {
-        "landmarks": detection_result.pose_landmarks[0],
+        "landmarks": landmarks,
         "bbox": (px, py, pw, ph),
         "shoulder_center": analysis.get("shoulder_center"),
     }
     return entry, analysis
+
+
+def _run_pose_landmarker(pose_landmarker, roi_rgb, running_mode, timestamp_ms):
+    """Execute a single MediaPipe inference call with stderr suppression."""
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=roi_rgb)
+
+    if running_mode == vision.RunningMode.VIDEO:
+        if not DEBUG:
+            with SuppressStderr():
+                return pose_landmarker.detect_for_video(mp_image, timestamp_ms)
+        return pose_landmarker.detect_for_video(mp_image, timestamp_ms)
+
+    if not DEBUG:
+        with SuppressStderr():
+            return pose_landmarker.detect(mp_image)
+    return pose_landmarker.detect(mp_image)
 
 
 def process_video(video_file: str = None, high_precision: bool = False):
@@ -759,44 +871,16 @@ def process_video(video_file: str = None, high_precision: bool = False):
 
         # Step 1: Pose estimation only (no drawing)
         landmarks_data = []
-        for (x, y, w, h) in rects:
-            # Expand ROI with padding for better pose accuracy
-            pad_w = int(w * ROI_PADDING_RATIO)
-            pad_h = int(h * ROI_PADDING_RATIO)
-            px = max(0, x - pad_w)
-            py = max(0, y - pad_h)
-            pw = min(width, x + w + pad_w) - px
-            ph = min(height, y + h + pad_h) - py
-
-            # Crop the padded region of interest (ROI)
-            roi = frame[py:py+ph, px:px+pw]
-            # Convert from BGR to RGB for MediaPipe
-            roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-
-            # Create mp.Image object for Tasks API
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=roi_rgb)
-
-            # Run pose estimation (suppress C++ warnings when DEBUG is False)
-            timestamp_ms = int(current_frame * 1000 / fps)
-            if not DEBUG:
-                with SuppressStderr():
-                    detection_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
-            else:
-                detection_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
-
-            if detection_result.pose_landmarks:
-                # Analyze ski pose (use padded ROI dimensions)
-                roi_h, roi_w = roi_rgb.shape[:2]
-                analysis = analyze_ski_pose(detection_result.pose_landmarks[0], roi_w, roi_h, POSE_VISIBILITY_THRESHOLD)
-                if analysis:
-                    latest_pose_analysis = analysis
-
-                    # Store landmarks with padded bbox for correct coordinate transforms
-                    landmarks_data.append({
-                        'landmarks': detection_result.pose_landmarks[0],
-                        'bbox': (px, py, pw, ph),
-                        'shoulder_center': analysis.get('shoulder_center')
-                    })
+        timestamp_ms = int(current_frame * 1000 / fps)
+        for bbox in rects:
+            entry, analysis = estimate_pose_for_bbox(
+                pose_landmarker, frame, bbox,
+                vision.RunningMode.VIDEO, width, height,
+                timestamp_ms=timestamp_ms,
+            )
+            if entry is not None and analysis is not None:
+                latest_pose_analysis = analysis
+                landmarks_data.append(entry)
 
         # Step 2: Apply zoom tracking if enabled
         output_frame = frame.copy()
