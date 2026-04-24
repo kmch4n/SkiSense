@@ -1,7 +1,8 @@
 """SkiSense - Single-image pose analysis flow.
 
 Analyzes a single ski image (still frame) and saves the annotated result.
-Shares detection / pose estimation / drawing helpers with ``main.py``.
+Shares YOLO detection and drawing helpers with ``main.py`` and delegates
+pose estimation to the configured pose backend.
 """
 import os
 import shutil
@@ -10,12 +11,18 @@ from datetime import datetime
 
 import cv2
 
+from .backends import get_backend
 from .config import DEVICE_PREFERENCE, INPUT_DIR, OUTPUT_DIR
 from .main import (
-    build_pose_landmarker, draw_bbox_on_zoomed_frame, draw_info_panel,
-    draw_landmarks_on_zoomed_frame, estimate_pose_for_bbox, load_yolo_model,
-    log_message, resolve_device, run_yolo_detection, vision,
+    draw_bbox_on_zoomed_frame,
+    draw_info_panel,
+    draw_landmarks_on_zoomed_frame,
+    load_yolo_model,
+    log_message,
+    resolve_device,
+    run_yolo_detection,
 )
+from .pose_topology import MEDIAPIPE_33
 
 
 def _pick_largest_bbox(rects):
@@ -52,7 +59,7 @@ def process_image(image_file: str = None):
         log_message("  - YOLO: MPS GPU (half=False)")
     else:
         log_message("  - YOLO: CPU")
-    log_message("  - MediaPipe: CPU (IMAGE mode)")
+    log_message("  - Pose backend: MediaPipe (IMAGE mode)")
     log_message("=" * 40)
 
     image_path = os.path.join(INPUT_DIR, image_file)
@@ -75,7 +82,7 @@ def process_image(image_file: str = None):
     input_copy_path = os.path.join(output_dir, "image.jpg")
     shutil.copy2(image_path, input_copy_path)
 
-    pose_landmarker = build_pose_landmarker(vision.RunningMode.IMAGE)
+    pose_backend = get_backend("mediapipe", running_mode="image")
     yolo_model = load_yolo_model(device, use_gpu)
 
     if device_str == "cuda":
@@ -106,14 +113,14 @@ def process_image(image_file: str = None):
         log_message("人物が検出されませんでした。元画像のみ保存します。")
     else:
         draw_bbox_on_zoomed_frame(output_frame, target_bbox, zoom_info)
-        landmarks_entry, analysis = estimate_pose_for_bbox(
-            pose_landmarker, frame, target_bbox,
-            vision.RunningMode.IMAGE, width, height,
-        )
+        landmarks_entry, analysis = pose_backend.estimate(frame, target_bbox)
         if landmarks_entry is not None:
             draw_landmarks_on_zoomed_frame(
-                output_frame, landmarks_entry["landmarks"],
-                landmarks_entry["bbox"], zoom_info,
+                output_frame,
+                landmarks_entry["landmarks"],
+                landmarks_entry["bbox"],
+                zoom_info,
+                topology=landmarks_entry.get("topology", MEDIAPIPE_33),
             )
             draw_info_panel(output_frame, analysis)
             log_message(f"姿勢スコア: {analysis['score']}/100")
@@ -129,7 +136,7 @@ def process_image(image_file: str = None):
     log_message(f"出力先: {output_dir}")
     log_message(f"処理が完了しました ({elapsed_str})")
 
-    pose_landmarker.close()
+    pose_backend.close()
 
 
 if __name__ == "__main__":
