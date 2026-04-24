@@ -6,6 +6,7 @@ interface. Emits COCO-17 landmarks (no foot keypoints), so
 backend is selected.
 """
 import os
+import shutil
 from typing import Optional, Tuple
 
 from .._logging import SuppressStderr
@@ -70,17 +71,41 @@ class Yolo11Backend(PoseBackend):
     # Model setup
 
     def _build_model(self):
+        os.makedirs(MODEL_DIR, exist_ok=True)
         preferred_path = os.path.join(MODEL_DIR, YOLO_POSE_MODEL)
-        # Fall back to the bare filename so Ultralytics can auto-download on
-        # first run; once downloaded, placing the weights under models/ makes
-        # later runs pick up the cached file from the preferred path.
-        target = preferred_path if os.path.exists(preferred_path) else YOLO_POSE_MODEL
+
+        if not os.path.exists(preferred_path):
+            self._ensure_weights_under_models(preferred_path)
 
         with SuppressStderr():
-            model = YOLO(target)
+            model = YOLO(preferred_path)
             if self._use_gpu and self._device is not None:
                 model.to(self._device)
         return model
+
+    def _ensure_weights_under_models(self, preferred_path: str) -> None:
+        """Place YOLO-Pose weights at ``preferred_path``.
+
+        If a copy already exists in the current working directory from an
+        earlier run, move it instead of re-downloading. Otherwise trigger
+        Ultralytics' auto-download while ``MODEL_DIR`` is the working
+        directory so the file lands in the right place from the start.
+        """
+        cwd_path = os.path.abspath(YOLO_POSE_MODEL)
+        if (os.path.exists(cwd_path)
+                and os.path.dirname(cwd_path) != os.path.abspath(MODEL_DIR)):
+            shutil.move(cwd_path, preferred_path)
+            return
+
+        original_cwd = os.getcwd()
+        try:
+            os.chdir(MODEL_DIR)
+            with SuppressStderr():
+                # Instantiating YOLO with a bare filename triggers an
+                # auto-download into the current working directory.
+                _ = YOLO(YOLO_POSE_MODEL)
+        finally:
+            os.chdir(original_cwd)
 
     # ------------------------------------------------------------------
     # Public API
