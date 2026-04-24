@@ -374,8 +374,165 @@ def draw_info_panel(frame, analysis):
                 (panel_x + text_padding, y_pos), font, 0.8 * scale_factor, score_color, thickness)
 
 
-def main(video_file: str = None, high_precision: bool = False):
-    """Main processing function.
+def build_pose_landmarker(running_mode):
+    """Build a MediaPipe PoseLandmarker with the specified running mode.
+
+    Handles model download, tempdir copy (for non-ASCII path safety),
+    and stderr suppression when DEBUG is disabled.
+
+    Args:
+        running_mode: vision.RunningMode.VIDEO or vision.RunningMode.IMAGE
+
+    Returns:
+        vision.PoseLandmarker instance
+    """
+    model_path = os.path.join(MODEL_DIR, POSE_MODEL)
+
+    if not os.path.exists(model_path):
+        import urllib.request
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        urllib.request.urlretrieve(POSE_MODEL_URL, model_path)
+
+    temp_dir = tempfile.mkdtemp()
+    temp_model_path = os.path.join(temp_dir, POSE_MODEL)
+    shutil.copy2(model_path, temp_model_path)
+    atexit.register(lambda: shutil.rmtree(temp_dir, ignore_errors=True))
+
+    base_options = python.BaseOptions(model_asset_path=temp_model_path)
+    options = vision.PoseLandmarkerOptions(
+        base_options=base_options,
+        running_mode=running_mode,
+        min_pose_detection_confidence=POSE_DETECTION_CONFIDENCE,
+        min_pose_presence_confidence=POSE_PRESENCE_CONF,
+        min_tracking_confidence=POSE_TRACKING_CONF,
+        num_poses=1,
+    )
+
+    if not DEBUG:
+        with SuppressStderr():
+            return vision.PoseLandmarker.create_from_options(options)
+    return vision.PoseLandmarker.create_from_options(options)
+
+
+def load_yolo_model(device, use_gpu: bool):
+    """Load YOLO weights and move to the target device.
+
+    Args:
+        device: torch.device returned by resolve_device()
+        use_gpu: True when CUDA or MPS is active
+
+    Returns:
+        YOLO model instance
+    """
+    yolo_model_path = os.path.join(MODEL_DIR, YOLO_MODEL)
+
+    if not DEBUG:
+        with SuppressStderr():
+            yolo_model = YOLO(yolo_model_path)
+            if use_gpu:
+                yolo_model.to(device)
+    else:
+        yolo_model = YOLO(yolo_model_path)
+        if use_gpu:
+            yolo_model.to(device)
+    return yolo_model
+
+
+def run_yolo_detection(yolo_model, frame, yolo_device, yolo_half: bool):
+    """Run YOLO person detection on a frame.
+
+    Returns:
+        List of (x, y, w, h) bboxes in absolute frame coordinates.
+    """
+    if not DEBUG:
+        with SuppressStderr():
+            results = yolo_model(
+                frame, classes=[0], conf=YOLO_CONFIDENCE,
+                verbose=False, device=yolo_device, half=yolo_half,
+            )
+    else:
+        results = yolo_model(
+            frame, classes=[0], conf=YOLO_CONFIDENCE,
+            verbose=DEBUG, device=yolo_device, half=yolo_half,
+        )
+
+    rects = []
+    for result in results:
+        for box in result.boxes:
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+            w, h = x2 - x1, y2 - y1
+            rects.append((int(x1), int(y1), int(w), int(h)))
+    return rects
+
+
+def estimate_pose_for_bbox(
+    pose_landmarker,
+    frame,
+    bbox,
+    running_mode,
+    frame_width: int,
+    frame_height: int,
+    timestamp_ms: int = None,
+):
+    """Run MediaPipe pose estimation on a single bbox's padded ROI.
+
+    Args:
+        pose_landmarker: vision.PoseLandmarker instance
+        frame: Full BGR frame (ndarray)
+        bbox: (x, y, w, h) in frame coordinates
+        running_mode: vision.RunningMode.VIDEO or IMAGE
+        frame_width: Frame width for ROI clamping
+        frame_height: Frame height for ROI clamping
+        timestamp_ms: Required when running_mode is VIDEO
+
+    Returns:
+        (landmarks_entry, analysis) tuple, each may be None on failure.
+    """
+    x, y, w, h = bbox
+    pad_w = int(w * ROI_PADDING_RATIO)
+    pad_h = int(h * ROI_PADDING_RATIO)
+    px = max(0, x - pad_w)
+    py = max(0, y - pad_h)
+    pw = min(frame_width, x + w + pad_w) - px
+    ph = min(frame_height, y + h + pad_h) - py
+
+    roi = frame[py:py + ph, px:px + pw]
+    roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=roi_rgb)
+
+    if running_mode == vision.RunningMode.VIDEO:
+        if not DEBUG:
+            with SuppressStderr():
+                detection_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
+        else:
+            detection_result = pose_landmarker.detect_for_video(mp_image, timestamp_ms)
+    else:
+        if not DEBUG:
+            with SuppressStderr():
+                detection_result = pose_landmarker.detect(mp_image)
+        else:
+            detection_result = pose_landmarker.detect(mp_image)
+
+    if not detection_result.pose_landmarks:
+        return None, None
+
+    roi_h, roi_w = roi_rgb.shape[:2]
+    analysis = analyze_ski_pose(
+        detection_result.pose_landmarks[0], roi_w, roi_h, POSE_VISIBILITY_THRESHOLD,
+    )
+    if not analysis:
+        return None, None
+
+    entry = {
+        "landmarks": detection_result.pose_landmarks[0],
+        "bbox": (px, py, pw, ph),
+        "shoulder_center": analysis.get("shoulder_center"),
+    }
+    return entry, analysis
+
+
+def process_video(video_file: str = None, high_precision: bool = False):
+    """Main processing function for video input.
 
     Args:
         video_file: Video filename in input/ directory. Defaults to "video.mp4".
@@ -718,5 +875,9 @@ def main(video_file: str = None, high_precision: bool = False):
         cv2.destroyAllWindows()
 
 
+# Backward-compatible alias
+main = process_video
+
+
 if __name__ == "__main__":
-    main()
+    process_video()
