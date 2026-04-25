@@ -6,9 +6,10 @@ from dotenv import load_dotenv
 # =============================================================================
 # Path Settings
 # =============================================================================
-# Get the project root directory (where run.py is located)
-# Use current working directory as base (assumes running from project root)
-PROJECT_ROOT = os.getcwd()
+# Resolve the repository root from this file's location so paths stay stable
+# regardless of the caller's current working directory.
+# config.py lives at <repo>/src/skisense/config.py, so parents[2] is the repo.
+PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 
 MODEL_DIR = os.path.join(PROJECT_ROOT, "models")
 INPUT_DIR = os.path.join(PROJECT_ROOT, "input")
@@ -17,7 +18,7 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 # =============================================================================
 # Load environment variables from .env file
 # =============================================================================
-env_path = Path(PROJECT_ROOT) / '.env'
+env_path = Path(PROJECT_ROOT) / ".env"
 load_dotenv(dotenv_path=env_path, verbose=False)
 
 # =============================================================================
