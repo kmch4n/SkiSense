@@ -316,6 +316,8 @@ def run_yolo_detection(yolo_model, frame, yolo_device, yolo_half: bool):
         for box in result.boxes:
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
             w, h = x2 - x1, y2 - y1
+            if w <= 0 or h <= 0:
+                continue
             rects.append((int(x1), int(y1), int(w), int(h)))
     return rects
 

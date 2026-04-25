@@ -117,6 +117,9 @@ class Yolo11Backend(PoseBackend):
         timestamp_ms: Optional[int] = None,  # unused; backend is stateless
     ) -> Tuple[Optional[dict], Optional[dict]]:
         x, y, w, h = bbox
+        if w <= 0 or h <= 0:
+            return None, None
+
         pad_w = int(w * ROI_PADDING_RATIO)
         pad_h = int(h * ROI_PADDING_RATIO)
         frame_h, frame_w = frame.shape[:2]
@@ -125,7 +128,13 @@ class Yolo11Backend(PoseBackend):
         pw = min(frame_w, x + w + pad_w) - px
         ph = min(frame_h, y + h + pad_h) - py
 
+        if pw <= 0 or ph <= 0:
+            return None, None
+
         roi = frame[py:py + ph, px:px + pw]
+        if roi.size == 0:
+            return None, None
+
         if CLAHE_ENABLED:
             roi = apply_clahe(roi)
 
