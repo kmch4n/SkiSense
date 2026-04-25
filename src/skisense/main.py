@@ -371,6 +371,22 @@ def process_video(video_file: str = None, high_precision: bool = False):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     current_frame = 0
 
+    invalid_fields = []
+    if not fps or fps <= 0:
+        invalid_fields.append(f"fps={fps}")
+    if width <= 0:
+        invalid_fields.append(f"width={width}")
+    if height <= 0:
+        invalid_fields.append(f"height={height}")
+    if invalid_fields:
+        log_message(
+            "Error: invalid video metadata "
+            f"({', '.join(invalid_fields)}) for {video_path}"
+        )
+        cap.release()
+        pose_backend.close()
+        return
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join(OUTPUT_DIR, timestamp)
     os.makedirs(output_dir, exist_ok=True)
