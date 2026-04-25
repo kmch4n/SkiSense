@@ -243,37 +243,43 @@ def draw_info_panel(frame, analysis):
     text_padding = int(10 * scale_factor)
     column2_offset = int(150 * scale_factor)
 
+    def _format_metric(label: str, key: str, fmt: str) -> str:
+        evaluation = evals[key]
+        if evaluation['status'] == 'info' or evaluation['label'] == 'N/A':
+            return f"{label}: N/A"
+        return f"{label}: {angles[key]:{fmt}}"
+
     y_pos = panel_y + line_height
     cv2.putText(frame, "Pose Analysis", (panel_x + text_padding, y_pos),
                 font, 0.7 * scale_factor, (255, 255, 255), thickness)
 
     y_pos += line_height
     color = COLORS[evals['left_knee']['status']]
-    cv2.putText(frame, f"L Knee: {angles['left_knee']:.0f}",
+    cv2.putText(frame, _format_metric("L Knee", "left_knee", ".0f"),
                 (panel_x + text_padding, y_pos), font, font_scale, color, thickness)
     color = COLORS[evals['right_knee']['status']]
-    cv2.putText(frame, f"R Knee: {angles['right_knee']:.0f}",
+    cv2.putText(frame, _format_metric("R Knee", "right_knee", ".0f"),
                 (panel_x + column2_offset, y_pos), font, font_scale, color, thickness)
 
     y_pos += line_height
     color = COLORS[evals['left_hip']['status']]
-    cv2.putText(frame, f"L Hip: {angles['left_hip']:.0f}",
+    cv2.putText(frame, _format_metric("L Hip", "left_hip", ".0f"),
                 (panel_x + text_padding, y_pos), font, font_scale, color, thickness)
     color = COLORS[evals['right_hip']['status']]
-    cv2.putText(frame, f"R Hip: {angles['right_hip']:.0f}",
+    cv2.putText(frame, _format_metric("R Hip", "right_hip", ".0f"),
                 (panel_x + column2_offset, y_pos), font, font_scale, color, thickness)
 
     y_pos += line_height
     color = COLORS[evals['shoulder_tilt']['status']]
-    cv2.putText(frame, f"Shoulder Tilt: {angles['shoulder_tilt']:.1f}",
+    cv2.putText(frame, _format_metric("Shoulder Tilt", "shoulder_tilt", ".1f"),
                 (panel_x + text_padding, y_pos), font, font_scale, color, thickness)
 
     y_pos += line_height
     color = COLORS[evals['left_ankle']['status']]
-    cv2.putText(frame, f"L Ankle: {angles['left_ankle']:.0f}",
+    cv2.putText(frame, _format_metric("L Ankle", "left_ankle", ".0f"),
                 (panel_x + text_padding, y_pos), font, font_scale, color, thickness)
     color = COLORS[evals['right_ankle']['status']]
-    cv2.putText(frame, f"R Ankle: {angles['right_ankle']:.0f}",
+    cv2.putText(frame, _format_metric("R Ankle", "right_ankle", ".0f"),
                 (panel_x + column2_offset, y_pos), font, font_scale, color, thickness)
 
     y_pos += line_height + text_padding
