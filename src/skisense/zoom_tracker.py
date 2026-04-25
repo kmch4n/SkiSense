@@ -99,51 +99,6 @@ class ZoomTracker:
         l, t, r, b = ltrb
         return (int(l), int(t), int(r - l), int(b - t))
 
-    def calculate_zoom_params(
-        self,
-        bbox: Optional[Tuple[int, int, int, int]]
-    ) -> Tuple[float, float, float]:
-        """Calculate smooth zoom parameters.
-
-        Args:
-            bbox: Target bounding box (x, y, w, h) or None
-
-        Returns:
-            Tuple of (center_x, center_y, scale)
-        """
-        if bbox is None:
-            # No detection: gradually return to center with no zoom
-            target_cx = self.frame_width / 2
-            target_cy = self.frame_height / 2
-            target_scale = 1.0
-        else:
-            x, y, w, h = bbox
-            target_cx = x + w / 2
-            target_cy = y + h / 2
-
-            if self.auto_scale:
-                # Calculate scale based on bounding box size
-                # Larger bbox = lower zoom (person is closer)
-                bbox_ratio = max(w / self.frame_width, h / self.frame_height)
-                # Target: bbox should occupy ~40% of zoomed frame
-                target_ratio = 0.4
-                target_scale = target_ratio / (bbox_ratio * self.padding)
-                target_scale = np.clip(target_scale, self.min_scale, self.max_scale)
-            else:
-                target_scale = self.zoom_scale
-
-        # Apply EMA smoothing
-        if self.smooth_center_x is None:
-            self.smooth_center_x = target_cx
-            self.smooth_center_y = target_cy
-            self.smooth_scale = target_scale
-        else:
-            self.smooth_center_x += self.smoothing * (target_cx - self.smooth_center_x)
-            self.smooth_center_y += self.smoothing * (target_cy - self.smooth_center_y)
-            self.smooth_scale += self.smoothing * (target_scale - self.smooth_scale)
-
-        return self.smooth_center_x, self.smooth_center_y, self.smooth_scale
-
     def apply_zoom(
         self,
         frame: np.ndarray,
