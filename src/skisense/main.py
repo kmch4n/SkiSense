@@ -322,12 +322,85 @@ def run_yolo_detection(yolo_model, frame, yolo_device, yolo_half: bool):
     return rects
 
 
-def process_video(video_file: str = None, high_precision: bool = False):
+def identity_zoom_info(width: int, height: int) -> dict:
+    """Return zoom metadata that maps frame coordinates directly."""
+    return {
+        'center': (width / 2, height / 2),
+        'scale': 1.0,
+        'crop': (0, 0, width, height),
+    }
+
+
+def bbox_area(bbox) -> int:
+    """Return bbox area for target selection."""
+    if bbox is None:
+        return 0
+    return max(0, int(bbox[2])) * max(0, int(bbox[3]))
+
+
+def select_primary_fast_pose(pose_results):
+    """Select the largest detected person from full-frame pose results."""
+    if not pose_results:
+        return None
+    return max(
+        pose_results,
+        key=lambda item: bbox_area(item[0].get("detection_bbox")),
+    )
+
+
+def process_fast_frame(frame, pose_backend, zoom_tracker, width: int, height: int):
+    """Process one frame with full-frame YOLO11-Pose only.
+
+    This skips the separate YOLOv8 detector, Deep SORT, and ROI pose calls.
+    """
+    pose_results = pose_backend.estimate_full_frame(frame)
+    primary = select_primary_fast_pose(pose_results)
+    primary_entry = primary[0] if primary is not None else None
+    current_analysis = primary[1] if primary is not None else None
+
+    if zoom_tracker is not None:
+        target_bbox = primary_entry.get("detection_bbox") if primary_entry else None
+        shoulder_center = primary_entry.get("shoulder_center") if primary_entry else None
+        output_frame, zoom_info = zoom_tracker.process_bbox(
+            frame,
+            target_bbox,
+            shoulder_center,
+        )
+    else:
+        output_frame = frame.copy()
+        zoom_info = identity_zoom_info(width, height)
+
+    for entry, _analysis in pose_results:
+        draw_bbox_on_zoomed_frame(
+            output_frame,
+            entry.get("detection_bbox", entry["bbox"]),
+            zoom_info,
+        )
+
+    for entry, _analysis in pose_results:
+        draw_landmarks_on_zoomed_frame(
+            output_frame,
+            entry["landmarks"],
+            entry["bbox"],
+            zoom_info,
+            topology=entry.get("topology", COCO_17),
+        )
+
+    draw_info_panel(output_frame, current_analysis)
+    return output_frame, current_analysis
+
+
+def process_video(
+    video_file: str = None,
+    high_precision: bool = False,
+    fast_mode: bool = False,
+):
     """Main processing function for video input.
 
     Args:
         video_file: Video filename in input/ directory. Defaults to "video.mp4".
         high_precision: If True, use frame interpolation for higher accuracy.
+        fast_mode: If True, use full-frame YOLO11-Pose without Deep SORT.
     """
     if video_file is None:
         video_file = "video.mp4"
@@ -351,7 +424,10 @@ def process_video(video_file: str = None, high_precision: bool = False):
     else:
         log_message("  - YOLO: CPU")
 
-    if DEVICE_STR == "cuda":
+    if fast_mode:
+        log_message("  - Deep SORT: disabled (fast mode)")
+        log_message("  - Fast mode: full-frame YOLO11-Pose, ROI preprocessing/TTA skipped")
+    elif DEVICE_STR == "cuda":
         log_message("  - Deep SORT: CUDA GPU")
     else:
         log_message("  - Deep SORT: CPU" + (" (MPS not supported)" if DEVICE_STR == "mps" else ""))
@@ -399,7 +475,8 @@ def process_video(video_file: str = None, high_precision: bool = False):
     output_dir = os.path.join(OUTPUT_DIR, timestamp)
     os.makedirs(output_dir, exist_ok=True)
 
-    output_video_path = os.path.join(output_dir, "video_pose.mp4")
+    output_video_name = "video_pose_fast.mp4" if fast_mode else "video_pose.mp4"
+    output_video_path = os.path.join(output_dir, output_video_name)
     best_shot_path = os.path.join(output_dir, "best_shot.jpg")
     input_copy_path = os.path.join(output_dir, "video.mp4")
 
@@ -418,20 +495,30 @@ def process_video(video_file: str = None, high_precision: bool = False):
             padding=ZOOM_PADDING,
         )
 
-    yolo_model = load_yolo_model(DEVICE, USE_CUDA)
+    if fast_mode and not hasattr(pose_backend, "estimate_full_frame"):
+        log_message("Error: selected pose backend does not support fast mode.")
+        cap.release()
+        out.release()
+        pose_backend.close()
+        return
 
-    # Deep SORT tracker: GPU acceleration is CUDA-only, not supported on MPS.
-    tracker_kwargs = {
-        "max_age": DEEPSORT_MAX_AGE,
-        "n_init": DEEPSORT_N_INIT,
-        "nms_max_overlap": 1.0,
-        "embedder": "mobilenet",
-        "half": (DEVICE_STR == "cuda"),
-        "bgr": True,
-    }
-    if "embedder_gpu" in inspect.signature(DeepSort).parameters:
-        tracker_kwargs["embedder_gpu"] = (DEVICE_STR == "cuda")
-    tracker = DeepSort(**tracker_kwargs)
+    yolo_model = None
+    tracker = None
+    if not fast_mode:
+        yolo_model = load_yolo_model(DEVICE, USE_CUDA)
+
+        # Deep SORT tracker: GPU acceleration is CUDA-only, not supported on MPS.
+        tracker_kwargs = {
+            "max_age": DEEPSORT_MAX_AGE,
+            "n_init": DEEPSORT_N_INIT,
+            "nms_max_overlap": 1.0,
+            "embedder": "mobilenet",
+            "half": (DEVICE_STR == "cuda"),
+            "bgr": True,
+        }
+        if "embedder_gpu" in inspect.signature(DeepSort).parameters:
+            tracker_kwargs["embedder_gpu"] = (DEVICE_STR == "cuda")
+        tracker = DeepSort(**tracker_kwargs)
 
     latest_pose_analysis = None
     best_score = -1
@@ -443,6 +530,8 @@ def process_video(video_file: str = None, high_precision: bool = False):
     log_message("処理を開始します")
     if high_precision:
         log_message("高精度モード: フレーム補間を使用（将来実装予定）")
+    if fast_mode:
+        log_message("高速モード: YOLOv8検出、Deep SORT、ROI前処理/TTAを省略")
     log_message("処理中...")
 
     if DEVICE_STR == "cuda":
@@ -461,45 +550,50 @@ def process_video(video_file: str = None, high_precision: bool = False):
         current_frame += 1
         pbar.update(1)
 
-        rects = run_yolo_detection(yolo_model, frame, yolo_device, yolo_half)
-
-        detections = [([x, y, w, h], 1.0, 'person') for (x, y, w, h) in rects]
-        tracks = tracker.update_tracks(detections, frame=frame)
-
-        # Step 1: Pose estimation through the selected backend.
-        landmarks_data = []
-        timestamp_ms = int(current_frame * 1000 / fps)
-        for bbox in rects:
-            entry, analysis = pose_backend.estimate(frame, bbox, timestamp_ms=timestamp_ms)
-            if entry is not None and analysis is not None:
-                latest_pose_analysis = analysis
-                landmarks_data.append(entry)
-
-        # Step 2: Apply zoom tracking if enabled.
-        output_frame = frame.copy()
-        if zoom_tracker is not None:
-            shoulder_center = landmarks_data[0]['shoulder_center'] if landmarks_data else None
-            output_frame, zoom_info = zoom_tracker.process_frame(
-                frame, tracks, rects, shoulder_center,
+        if fast_mode:
+            output_frame, latest_pose_analysis = process_fast_frame(
+                frame,
+                pose_backend,
+                zoom_tracker,
+                width,
+                height,
             )
         else:
-            zoom_info = {
-                'center': (width / 2, height / 2),
-                'scale': 1.0,
-                'crop': (0, 0, width, height),
-            }
+            rects = run_yolo_detection(yolo_model, frame, yolo_device, yolo_half)
 
-        # Step 3: Draw on the zoomed frame.
-        for (x, y, w, h) in rects:
-            draw_bbox_on_zoomed_frame(output_frame, (x, y, w, h), zoom_info)
+            detections = [([x, y, w, h], 1.0, 'person') for (x, y, w, h) in rects]
+            tracks = tracker.update_tracks(detections, frame=frame)
 
-        for data in landmarks_data:
-            draw_landmarks_on_zoomed_frame(
-                output_frame, data['landmarks'], data['bbox'], zoom_info,
-                topology=data.get('topology', COCO_17),
-            )
+            # Step 1: Pose estimation through the selected backend.
+            landmarks_data = []
+            timestamp_ms = int(current_frame * 1000 / fps)
+            for bbox in rects:
+                entry, analysis = pose_backend.estimate(frame, bbox, timestamp_ms=timestamp_ms)
+                if entry is not None and analysis is not None:
+                    latest_pose_analysis = analysis
+                    landmarks_data.append(entry)
 
-        draw_info_panel(output_frame, latest_pose_analysis)
+            # Step 2: Apply zoom tracking if enabled.
+            output_frame = frame.copy()
+            if zoom_tracker is not None:
+                shoulder_center = landmarks_data[0]['shoulder_center'] if landmarks_data else None
+                output_frame, zoom_info = zoom_tracker.process_frame(
+                    frame, tracks, rects, shoulder_center,
+                )
+            else:
+                zoom_info = identity_zoom_info(width, height)
+
+            # Step 3: Draw on the zoomed frame.
+            for (x, y, w, h) in rects:
+                draw_bbox_on_zoomed_frame(output_frame, (x, y, w, h), zoom_info)
+
+            for data in landmarks_data:
+                draw_landmarks_on_zoomed_frame(
+                    output_frame, data['landmarks'], data['bbox'], zoom_info,
+                    topology=data.get('topology', COCO_17),
+                )
+
+            draw_info_panel(output_frame, latest_pose_analysis)
 
         if latest_pose_analysis and latest_pose_analysis['score'] > best_score:
             best_score = latest_pose_analysis['score']

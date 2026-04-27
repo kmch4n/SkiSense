@@ -236,6 +236,66 @@ class ZoomTracker:
 
         return zoomed_frame, zoom_info
 
+    def process_bbox(
+        self,
+        frame: np.ndarray,
+        bbox: Optional[Tuple[int, int, int, int]],
+        shoulder_center: Optional[Tuple[float, float]] = None,
+    ) -> Tuple[np.ndarray, Optional[dict]]:
+        """Process a frame using a direct bbox instead of Deep SORT tracks.
+
+        Args:
+            frame: Input frame without overlays.
+            bbox: Target bbox in full-frame coordinates, or None.
+            shoulder_center: Optional shoulder center in full-frame coordinates.
+
+        Returns:
+            Tuple of (zoomed_frame, zoom_info).
+        """
+        if bbox is not None:
+            self.frames_since_detection = 0
+
+            x, y, w, h = bbox
+            if shoulder_center is not None:
+                target_cx, target_cy = shoulder_center
+            else:
+                target_cx = x + w / 2
+                target_cy = y + h / 2
+            target_scale = self.zoom_scale
+            self.last_valid_target = (target_cx, target_cy, target_scale)
+        else:
+            self.frames_since_detection += 1
+            if (
+                self.frames_since_detection < self.detection_timeout
+                and self.last_valid_target
+            ):
+                target_cx, target_cy, target_scale = self.last_valid_target
+            else:
+                target_cx = self.frame_width / 2
+                target_cy = self.frame_height / 2
+                target_scale = 1.0
+
+        if self.smooth_center_x is None:
+            self.smooth_center_x = target_cx
+            self.smooth_center_y = target_cy
+            self.smooth_scale = target_scale
+        else:
+            self.smooth_center_x += self.smoothing * (target_cx - self.smooth_center_x)
+            self.smooth_center_y += self.smoothing * (target_cy - self.smooth_center_y)
+            self.smooth_scale += self.smoothing * (target_scale - self.smooth_scale)
+
+        zoomed_frame, crop_region = self.apply_zoom(
+            frame, self.smooth_center_x, self.smooth_center_y, self.smooth_scale
+        )
+
+        zoom_info = {
+            'center': (self.smooth_center_x, self.smooth_center_y),
+            'scale': self.smooth_scale,
+            'crop': crop_region
+        }
+
+        return zoomed_frame, zoom_info
+
     def reset(self):
         """Reset tracker state."""
         self.smooth_center_x = None

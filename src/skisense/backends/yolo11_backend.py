@@ -7,7 +7,7 @@ backend is selected.
 """
 import os
 import shutil
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from .._logging import SuppressStderr
 
@@ -169,6 +169,75 @@ class Yolo11Backend(PoseBackend):
         }
         return entry, analysis
 
+    def estimate_full_frame(self, frame) -> List[Tuple[dict, dict]]:
+        """Run one full-frame YOLO11-Pose pass and return all valid people.
+
+        The returned landmark entries use the full frame as their coordinate
+        base so drawing can reuse the existing ROI-aware helpers.
+        """
+        frame_h, frame_w = frame.shape[:2]
+        with SuppressStderr():
+            results = self._model(
+                frame,
+                conf=YOLO_POSE_CONFIDENCE,
+                verbose=False,
+                device=self._yolo_device,
+                half=self._yolo_half,
+            )
+
+        if not results:
+            return []
+
+        result = results[0]
+        keypoints = getattr(result, "keypoints", None)
+        if keypoints is None or keypoints.xyn is None or len(keypoints.xyn) == 0:
+            return []
+
+        boxes = getattr(result, "boxes", None)
+        boxes_xyxy = None
+        boxes_conf = None
+        if boxes is not None and boxes.xyxy is not None:
+            boxes_xyxy = boxes.xyxy.cpu().numpy()
+            if boxes.conf is not None:
+                boxes_conf = boxes.conf.cpu().numpy()
+
+        xyn_all = keypoints.xyn.cpu().numpy()
+        conf_all = keypoints.conf.cpu().numpy() if keypoints.conf is not None else None
+        entries = []
+
+        for person_idx, xyn in enumerate(xyn_all):
+            conf = conf_all[person_idx] if conf_all is not None else [1.0] * len(xyn)
+            landmarks = self._build_landmarks(xyn, conf)
+            analysis = analyze_ski_pose(
+                landmarks,
+                frame_w,
+                frame_h,
+                visibility_threshold=POSE_VISIBILITY_THRESHOLD,
+                visibility_threshold_legs=POSE_VISIBILITY_THRESHOLD_LEGS,
+                topology=COCO_17,
+            )
+            if not analysis:
+                continue
+
+            detection_bbox = self._bbox_for_person(
+                boxes_xyxy,
+                person_idx,
+                frame_w,
+                frame_h,
+            )
+            entry = {
+                "landmarks": landmarks,
+                "bbox": (0, 0, frame_w, frame_h),
+                "detection_bbox": detection_bbox,
+                "shoulder_center": analysis.get("shoulder_center"),
+                "topology": COCO_17,
+            }
+            if boxes_conf is not None:
+                entry["confidence"] = float(boxes_conf[person_idx])
+            entries.append((entry, analysis))
+
+        return entries
+
     def close(self) -> None:
         # Ultralytics YOLO does not expose an explicit close; drop the
         # reference so CUDA memory can be reclaimed by GC.
@@ -212,10 +281,40 @@ class Yolo11Backend(PoseBackend):
         else:
             conf = [1.0] * len(xyn)
 
+        return self._build_landmarks(xyn, conf)
+
+    def _build_landmarks(self, xyn, conf) -> List[_YoloLandmark]:
+        """Convert Ultralytics normalized keypoints into landmark shims."""
         return [
-            _YoloLandmark(x=float(xyn[i, 0]), y=float(xyn[i, 1]), visibility=float(conf[i]))
+            _YoloLandmark(
+                x=float(xyn[i, 0]),
+                y=float(xyn[i, 1]),
+                visibility=float(conf[i]),
+            )
             for i in range(len(xyn))
         ]
+
+    def _bbox_for_person(
+        self,
+        boxes_xyxy,
+        person_idx: int,
+        frame_w: int,
+        frame_h: int,
+    ) -> Tuple[int, int, int, int]:
+        """Return a clamped bbox for a full-frame YOLO11-Pose detection."""
+        if boxes_xyxy is None or person_idx >= len(boxes_xyxy):
+            return (0, 0, frame_w, frame_h)
+
+        x1, y1, x2, y2 = boxes_xyxy[person_idx]
+        x1 = int(max(0, min(frame_w, x1)))
+        y1 = int(max(0, min(frame_h, y1)))
+        x2 = int(max(0, min(frame_w, x2)))
+        y2 = int(max(0, min(frame_h, y2)))
+        w = max(0, x2 - x1)
+        h = max(0, y2 - y1)
+        if w <= 0 or h <= 0:
+            return (0, 0, frame_w, frame_h)
+        return (x1, y1, w, h)
 
     def _merge_flipped(self, landmarks_orig, landmarks_flipped):
         """Pick the higher-visibility landmark per joint between the original
