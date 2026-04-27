@@ -16,7 +16,8 @@ class PoseBackend(ABC):
     {
         "landmarks":       list,               # objects with .x, .y, .visibility
         "bbox":            (px, py, pw, ph),   # padded ROI in frame coordinates
-        "shoulder_center": (x, y),
+        "torso_center":    (x, y),             # preferred zoom target
+        "shoulder_center": (x, y),             # fallback zoom target
         "topology":        PoseTopology,       # describes landmark indices
     }
     ```

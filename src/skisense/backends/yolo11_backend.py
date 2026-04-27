@@ -164,7 +164,10 @@ class Yolo11Backend(PoseBackend):
         entry = {
             "landmarks": landmarks,
             "bbox": (px, py, pw, ph),
+            "detection_bbox": (x, y, w, h),
+            "torso_center": analysis.get("torso_center"),
             "shoulder_center": analysis.get("shoulder_center"),
+            "hip_center": analysis.get("hip_center"),
             "topology": COCO_17,
         }
         return entry, analysis
@@ -229,7 +232,9 @@ class Yolo11Backend(PoseBackend):
                 "landmarks": landmarks,
                 "bbox": (0, 0, frame_w, frame_h),
                 "detection_bbox": detection_bbox,
+                "torso_center": analysis.get("torso_center"),
                 "shoulder_center": analysis.get("shoulder_center"),
+                "hip_center": analysis.get("hip_center"),
                 "topology": COCO_17,
             }
             if boxes_conf is not None:

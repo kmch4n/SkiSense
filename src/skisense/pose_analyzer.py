@@ -274,15 +274,34 @@ def analyze_ski_pose(
         _grade(left_ankle_angle, evaluate_ankle_angle, 'left_ankle')
         _grade(right_ankle_angle, evaluate_ankle_angle, 'right_ankle')
 
-        results['evaluations'] = evaluations
-        results['score'] = int(score_total / score_count) if score_count > 0 else 0
-
-        # Shoulder center is used for zoom centering
         shoulder_center = (
             (left_shoulder[0] + right_shoulder[0]) / 2,
             (left_shoulder[1] + right_shoulder[1]) / 2,
         )
+        hip_center = (
+            (left_hip[0] + right_hip[0]) / 2,
+            (left_hip[1] + right_hip[1]) / 2,
+        )
+        if _visible(
+            idx["left_shoulder"],
+            idx["right_shoulder"],
+            idx["left_hip"],
+            idx["right_hip"],
+        ):
+            torso_center = (
+                (shoulder_center[0] + hip_center[0]) / 2,
+                (shoulder_center[1] + hip_center[1]) / 2,
+            )
+        elif _visible(idx["left_hip"], idx["right_hip"]):
+            torso_center = hip_center
+        else:
+            torso_center = shoulder_center
+
+        results['evaluations'] = evaluations
+        results['score'] = int(score_total / score_count) if score_count > 0 else 0
         results['shoulder_center'] = shoulder_center
+        results['hip_center'] = hip_center
+        results['torso_center'] = torso_center
 
     except Exception:
         return None

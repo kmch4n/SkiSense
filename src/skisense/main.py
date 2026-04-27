@@ -10,6 +10,7 @@ from .config import (
     MODEL_DIR, INPUT_DIR, OUTPUT_DIR,
     YOLO_MODEL,
     ZOOM_ENABLED, ZOOM_SCALE, ZOOM_SMOOTHING, ZOOM_PADDING,
+    ZOOM_TARGET_AREA_RATIO, ZOOM_MAX_SCALE,
     YOLO_CONFIDENCE, DEEPSORT_MAX_AGE, DEEPSORT_N_INIT,
     POSE_VISIBILITY_THRESHOLD, POSE_VISIBILITY_THRESHOLD_LEGS,
 )
@@ -348,6 +349,52 @@ def select_primary_fast_pose(pose_results):
     )
 
 
+def frame_center_from_entry(entry, key: str = "torso_center"):
+    """Return a pose center converted into full-frame coordinates."""
+    center = entry.get(key) or entry.get("torso_center") or entry.get("shoulder_center")
+    if center is None:
+        return None
+    x, y, _w, _h = entry["bbox"]
+    return (x + center[0], y + center[1])
+
+
+def bbox_iou(a, b) -> float:
+    """Return intersection-over-union for two xywh bboxes."""
+    if a is None or b is None:
+        return 0.0
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ax2, ay2 = ax + aw, ay + ah
+    bx2, by2 = bx + bw, by + bh
+
+    inter_w = max(0, min(ax2, bx2) - max(ax, bx))
+    inter_h = max(0, min(ay2, by2) - max(ay, by))
+    inter_area = inter_w * inter_h
+    union_area = aw * ah + bw * bh - inter_area
+    if union_area <= 0:
+        return 0.0
+    return inter_area / union_area
+
+
+def pose_entry_for_bbox(landmarks_data, bbox):
+    """Find the pose entry that was estimated from a detector bbox."""
+    if bbox is None:
+        return None
+    best_entry = None
+    best_iou = 0.0
+    for entry in landmarks_data:
+        entry_bbox = entry.get("detection_bbox")
+        if entry_bbox == bbox:
+            return entry
+        score = bbox_iou(entry_bbox, bbox)
+        if score > best_iou:
+            best_iou = score
+            best_entry = entry
+    if best_entry is not None and best_iou > 0.1:
+        return best_entry
+    return landmarks_data[0] if landmarks_data else None
+
+
 def process_fast_frame(frame, pose_backend, zoom_tracker, width: int, height: int):
     """Process one frame with full-frame YOLO11-Pose only.
 
@@ -360,11 +407,14 @@ def process_fast_frame(frame, pose_backend, zoom_tracker, width: int, height: in
 
     if zoom_tracker is not None:
         target_bbox = primary_entry.get("detection_bbox") if primary_entry else None
-        shoulder_center = primary_entry.get("shoulder_center") if primary_entry else None
+        target_center = (
+            frame_center_from_entry(primary_entry)
+            if primary_entry is not None else None
+        )
         output_frame, zoom_info = zoom_tracker.process_bbox(
             frame,
             target_bbox,
-            shoulder_center,
+            target_center,
         )
     else:
         output_frame = frame.copy()
@@ -493,6 +543,8 @@ def process_video(
             zoom_scale=ZOOM_SCALE,
             smoothing=ZOOM_SMOOTHING,
             padding=ZOOM_PADDING,
+            target_area_ratio=ZOOM_TARGET_AREA_RATIO,
+            max_scale=ZOOM_MAX_SCALE,
         )
 
     if fast_mode and not hasattr(pose_backend, "estimate_full_frame"):
@@ -573,12 +625,18 @@ def process_video(
                     latest_pose_analysis = analysis
                     landmarks_data.append(entry)
 
-            # Step 2: Apply zoom tracking if enabled.
             output_frame = frame.copy()
             if zoom_tracker is not None:
-                shoulder_center = landmarks_data[0]['shoulder_center'] if landmarks_data else None
-                output_frame, zoom_info = zoom_tracker.process_frame(
-                    frame, tracks, rects, shoulder_center,
+                target_bbox = zoom_tracker.select_main_target(tracks, rects)
+                target_entry = pose_entry_for_bbox(landmarks_data, target_bbox)
+                target_center = (
+                    frame_center_from_entry(target_entry)
+                    if target_entry is not None else None
+                )
+                output_frame, zoom_info = zoom_tracker.process_bbox(
+                    frame,
+                    target_bbox,
+                    target_center,
                 )
             else:
                 zoom_info = identity_zoom_info(width, height)
