@@ -199,10 +199,8 @@ def transform_point_to_zoom(point, bbox, zoom_info):
     zoom_x = (frame_x - x1) / crop_w
     zoom_y = (frame_y - y1) / crop_h
 
-    # Clamp to frame boundaries so skeleton lines still render even when
-    # an endpoint falls outside the zoom region.
-    zoom_x = max(0, min(1, zoom_x))
-    zoom_y = max(0, min(1, zoom_y))
+    if zoom_x < 0 or zoom_x > 1 or zoom_y < 0 or zoom_y > 1:
+        return None
     return (zoom_x, zoom_y)
 
 
@@ -276,6 +274,26 @@ def draw_bbox_on_zoomed_frame(frame, bbox, zoom_info):
         pt1 = (int(tl[0] * w), int(tl[1] * h))
         pt2 = (int(br[0] * w), int(br[1] * h))
         cv2.rectangle(frame, pt1, pt2, (255, 0, 0), 2)
+
+
+def draw_target_overlay(frame, target_bbox, target_entry, zoom_info):
+    """Draw only the selected skier overlay on the output frame."""
+    if target_entry is not None:
+        overlay_bbox = target_entry.get("detection_bbox", target_entry["bbox"])
+    else:
+        overlay_bbox = target_bbox
+
+    if overlay_bbox is not None:
+        draw_bbox_on_zoomed_frame(frame, overlay_bbox, zoom_info)
+
+    if target_entry is not None:
+        draw_landmarks_on_zoomed_frame(
+            frame,
+            target_entry["landmarks"],
+            target_entry["bbox"],
+            zoom_info,
+            topology=target_entry.get("topology", COCO_17),
+        )
 
 
 def draw_info_panel(frame, analysis):
@@ -596,8 +614,8 @@ def process_fast_frame(
     primary_entry = primary[0] if primary is not None else None
     current_analysis = primary[1] if primary is not None else None
 
+    zoom_bbox = target_bbox
     if zoom_tracker is not None:
-        zoom_bbox = target_bbox
         if zoom_bbox is None and primary_entry is not None:
             zoom_bbox = primary_entry.get("detection_bbox")
         target_center = (
@@ -613,22 +631,7 @@ def process_fast_frame(
         output_frame = frame.copy()
         zoom_info = identity_zoom_info(width, height)
 
-    for entry, _analysis in pose_results:
-        draw_bbox_on_zoomed_frame(
-            output_frame,
-            entry.get("detection_bbox", entry["bbox"]),
-            zoom_info,
-        )
-
-    for entry, _analysis in pose_results:
-        draw_landmarks_on_zoomed_frame(
-            output_frame,
-            entry["landmarks"],
-            entry["bbox"],
-            zoom_info,
-            topology=entry.get("topology", COCO_17),
-        )
-
+    draw_target_overlay(output_frame, zoom_bbox, primary_entry, zoom_info)
     draw_info_panel(output_frame, current_analysis)
     return output_frame, current_analysis
 
@@ -837,16 +840,16 @@ def process_video(
 
             # Step 1: Pose estimation through the selected backend.
             pose_results = []
-            landmarks_data = []
             timestamp_ms = int(current_frame * 1000 / fps)
             for bbox in rects:
                 entry, analysis = pose_backend.estimate(frame, bbox, timestamp_ms=timestamp_ms)
                 if entry is not None and analysis is not None:
                     pose_results.append((entry, analysis))
-                    landmarks_data.append(entry)
 
             output_frame = frame.copy()
-            current_pose_analysis = latest_pose_analysis
+            current_pose_analysis = None
+            target_bbox = None
+            target_entry = None
             if zoom_tracker is not None:
                 if active_target_mode == "longest" and target_plan is not None:
                     target_bbox = target_plan.bbox_for_frame(current_frame)
@@ -855,9 +858,7 @@ def process_video(
 
                 target_result = pose_result_for_bbox(pose_results, target_bbox)
                 target_entry = target_result[0] if target_result is not None else None
-                current_pose_analysis = (
-                    target_result[1] if target_result is not None else latest_pose_analysis
-                )
+                current_pose_analysis = target_result[1] if target_result is not None else None
                 target_center = (
                     frame_center_from_entry(target_entry)
                     if target_entry is not None else None
@@ -874,16 +875,7 @@ def process_video(
 
             latest_pose_analysis = current_pose_analysis
 
-            # Step 3: Draw on the zoomed frame.
-            for (x, y, w, h) in rects:
-                draw_bbox_on_zoomed_frame(output_frame, (x, y, w, h), zoom_info)
-
-            for data in landmarks_data:
-                draw_landmarks_on_zoomed_frame(
-                    output_frame, data['landmarks'], data['bbox'], zoom_info,
-                    topology=data.get('topology', COCO_17),
-                )
-
+            draw_target_overlay(output_frame, target_bbox, target_entry, zoom_info)
             draw_info_panel(output_frame, latest_pose_analysis)
 
         if latest_pose_analysis and latest_pose_analysis['score'] > best_score:

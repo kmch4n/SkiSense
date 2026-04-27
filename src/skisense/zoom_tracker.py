@@ -174,41 +174,35 @@ class ZoomTracker:
         x2 = x1 + crop_w
         y2 = y1 + crop_h
 
-        # Pad instead of clamping so the target center can stay fixed even near
-        # the original frame edges.
-        x1_i = int(np.floor(x1))
-        y1_i = int(np.floor(y1))
-        x2_i = int(np.ceil(x2))
-        y2_i = int(np.ceil(y2))
-
-        pad_left = max(0, -x1_i)
-        pad_top = max(0, -y1_i)
-        pad_right = max(0, x2_i - w)
-        pad_bottom = max(0, y2_i - h)
-
-        if pad_left or pad_top or pad_right or pad_bottom:
-            source = cv2.copyMakeBorder(
-                frame,
-                pad_top,
-                pad_bottom,
-                pad_left,
-                pad_right,
-                cv2.BORDER_REPLICATE,
-            )
+        # Keep the crop inside the real source frame. Padding with replicated
+        # edge pixels creates obvious horizontal/vertical bands when the skier
+        # is close to the frame boundary.
+        if crop_w >= w:
+            x1 = 0.0
+            x2 = float(w)
         else:
-            source = frame
+            x1 = float(np.clip(x1, 0.0, w - crop_w))
+            x2 = x1 + crop_w
 
-        crop_x1 = x1_i + pad_left
-        crop_y1 = y1_i + pad_top
-        crop_x2 = x2_i + pad_left
-        crop_y2 = y2_i + pad_top
-        cropped = source[crop_y1:crop_y2, crop_x1:crop_x2]
+        if crop_h >= h:
+            y1 = 0.0
+            y2 = float(h)
+        else:
+            y1 = float(np.clip(y1, 0.0, h - crop_h))
+            y2 = y1 + crop_h
+
+        x1_i = max(0, int(np.floor(x1)))
+        y1_i = max(0, int(np.floor(y1)))
+        x2_i = min(w, int(np.ceil(x2)))
+        y2_i = min(h, int(np.ceil(y2)))
+
+        cropped = frame[y1_i:y2_i, x1_i:x2_i]
         if cropped.size == 0:
             return frame.copy(), (0, 0, w, h)
 
         zoomed = cv2.resize(cropped, (w, h), interpolation=cv2.INTER_LINEAR)
 
-        return zoomed, (x1, y1, x2, y2)
+        return zoomed, (float(x1_i), float(y1_i), float(x2_i), float(y2_i))
 
     def process_frame(
         self,
