@@ -89,6 +89,8 @@ DEVICE_PREFERENCE = _get_str('SKISENSE_DEVICE', 'auto',
 YOLO_CONFIDENCE = _get_float('SKISENSE_YOLO_CONFIDENCE', 0.3, min_val=0.0, max_val=1.0)         # YOLO detection confidence threshold (0.0-1.0)
 DEEPSORT_MAX_AGE = _get_int('SKISENSE_DEEPSORT_MAX_AGE', 30, min_val=1)         # Frames to keep track without detection
 DEEPSORT_N_INIT = _get_int('SKISENSE_DEEPSORT_N_INIT', 1, min_val=1)           # Frames required to confirm new track
+TARGET_SELECTION_MODE = _get_str('SKISENSE_TARGET_SELECTION_MODE', 'longest',
+                                  valid_options=['longest', 'largest'])  # "longest" | "largest"
 POSE_VISIBILITY_THRESHOLD = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD', 0.5, min_val=0.0, max_val=1.0)  # Minimum landmark visibility for upper-body joints
 POSE_VISIBILITY_THRESHOLD_LEGS = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD_LEGS', 0.3, min_val=0.0, max_val=1.0)  # Looser threshold for leg joints (often occluded in ski poses)
 ROI_PADDING_RATIO = _get_float('SKISENSE_ROI_PADDING', 0.3, min_val=0.0, max_val=1.0)  # ROI bbox expansion ratio for better pose accuracy

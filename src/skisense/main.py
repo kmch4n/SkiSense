@@ -9,6 +9,7 @@ from .config import (
     SHOW_GUI, DEVICE_PREFERENCE,
     MODEL_DIR, INPUT_DIR, OUTPUT_DIR,
     YOLO_MODEL,
+    TARGET_SELECTION_MODE,
     ZOOM_ENABLED, ZOOM_SCALE, ZOOM_SMOOTHING, ZOOM_PADDING,
     ZOOM_TARGET_AREA_RATIO, ZOOM_MAX_SCALE,
     YOLO_CONFIDENCE, DEEPSORT_MAX_AGE, DEEPSORT_N_INIT,
@@ -23,7 +24,9 @@ import inspect
 import os
 import shutil
 import time
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -44,6 +47,68 @@ def log_message(message: str):
 
 # Module-level alias for callers that import the active skeleton edges.
 POSE_CONNECTIONS = COCO_17.connections
+BBox = Tuple[int, int, int, int]
+
+
+@dataclass
+class TrackStats:
+    """Aggregated visibility stats for one Deep SORT track."""
+
+    track_id: int
+    frames_seen: int = 0
+    first_frame: Optional[int] = None
+    last_frame: Optional[int] = None
+    area_sum: float = 0.0
+    center_distance_sum: float = 0.0
+
+    def update(
+        self,
+        frame_number: int,
+        bbox: BBox,
+        frame_width: int,
+        frame_height: int,
+    ) -> None:
+        """Record one visible frame for this track."""
+        x, y, w, h = bbox
+        center_x = x + w / 2
+        center_y = y + h / 2
+        frame_center_x = frame_width / 2
+        frame_center_y = frame_height / 2
+
+        self.frames_seen += 1
+        self.first_frame = frame_number if self.first_frame is None else self.first_frame
+        self.last_frame = frame_number
+        self.area_sum += max(0, w) * max(0, h)
+        self.center_distance_sum += float(
+            np.hypot(center_x - frame_center_x, center_y - frame_center_y)
+        )
+
+    @property
+    def average_area(self) -> float:
+        """Return the average bbox area for tie-breaking."""
+        if self.frames_seen == 0:
+            return 0.0
+        return self.area_sum / self.frames_seen
+
+    @property
+    def average_center_distance(self) -> float:
+        """Return average distance from the frame center."""
+        if self.frames_seen == 0:
+            return float("inf")
+        return self.center_distance_sum / self.frames_seen
+
+
+@dataclass
+class TargetTrackPlan:
+    """Frame-by-frame bboxes for the selected main skier track."""
+
+    track_id: int
+    stats: TrackStats
+    frame_bboxes: Dict[int, BBox] = field(default_factory=dict)
+
+    def bbox_for_frame(self, frame_number: int) -> Optional[BBox]:
+        """Return the selected track bbox for one frame if visible."""
+        return self.frame_bboxes.get(frame_number)
 
 
 def visibility_threshold_for(index: int, topology: PoseTopology = COCO_17) -> float:
@@ -300,7 +365,22 @@ def load_yolo_model(device, use_gpu: bool):
     return yolo_model
 
 
-def run_yolo_detection(yolo_model, frame, yolo_device, yolo_half: bool):
+def create_deepsort_tracker(device_str: str) -> DeepSort:
+    """Create a Deep SORT tracker with the project defaults."""
+    tracker_kwargs = {
+        "max_age": DEEPSORT_MAX_AGE,
+        "n_init": DEEPSORT_N_INIT,
+        "nms_max_overlap": 1.0,
+        "embedder": "mobilenet",
+        "half": (device_str == "cuda"),
+        "bgr": True,
+    }
+    if "embedder_gpu" in inspect.signature(DeepSort).parameters:
+        tracker_kwargs["embedder_gpu"] = (device_str == "cuda")
+    return DeepSort(**tracker_kwargs)
+
+
+def run_yolo_detection(yolo_model, frame, yolo_device, yolo_half: bool) -> list[BBox]:
     """Run YOLO person detection on a frame.
 
     Returns:
@@ -323,6 +403,99 @@ def run_yolo_detection(yolo_model, frame, yolo_device, yolo_half: bool):
     return rects
 
 
+def ltrb_to_xywh(ltrb: Tuple[float, ...], width: int, height: int) -> Optional[BBox]:
+    """Convert Deep SORT ltrb coordinates to a clipped xywh bbox."""
+    left, top, right, bottom = ltrb
+    x1 = max(0, min(width, int(round(left))))
+    y1 = max(0, min(height, int(round(top))))
+    x2 = max(0, min(width, int(round(right))))
+    y2 = max(0, min(height, int(round(bottom))))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return (x1, y1, x2 - x1, y2 - y1)
+
+
+def choose_longest_track(stats_by_id: Dict[int, TrackStats]) -> Optional[TrackStats]:
+    """Choose the most likely main skier from accumulated track stats."""
+    if not stats_by_id:
+        return None
+    return max(
+        stats_by_id.values(),
+        key=lambda stats: (
+            stats.frames_seen,
+            stats.average_area,
+            -stats.average_center_distance,
+        ),
+    )
+
+
+def build_longest_track_plan(
+    video_path: str,
+    width: int,
+    height: int,
+    total_frames: int,
+    yolo_model,
+    yolo_device,
+    yolo_half: bool,
+    device_str: str,
+) -> Optional[TargetTrackPlan]:
+    """Pre-scan the video and lock onto the longest visible person track."""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        log_message(f"Warning: could not open video for target selection: {video_path}")
+        return None
+
+    tracker = create_deepsort_tracker(device_str)
+    stats_by_id: Dict[int, TrackStats] = {}
+    bboxes_by_track: Dict[int, Dict[int, BBox]] = {}
+    frame_number = 0
+
+    pbar = tqdm(total=total_frames, desc="Selecting target", unit="frame")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        frame_number += 1
+        pbar.update(1)
+
+        rects = run_yolo_detection(yolo_model, frame, yolo_device, yolo_half)
+        detections = [([x, y, w, h], 1.0, 'person') for (x, y, w, h) in rects]
+        tracks = tracker.update_tracks(detections, frame=frame)
+
+        for track in tracks:
+            if not track.is_confirmed():
+                continue
+            bbox = ltrb_to_xywh(track.to_ltrb(), width, height)
+            if bbox is None:
+                continue
+
+            track_id = int(track.track_id)
+            stats = stats_by_id.setdefault(track_id, TrackStats(track_id=track_id))
+            stats.update(frame_number, bbox, width, height)
+            bboxes_by_track.setdefault(track_id, {})[frame_number] = bbox
+
+    pbar.close()
+    cap.release()
+
+    selected_stats = choose_longest_track(stats_by_id)
+    if selected_stats is None:
+        log_message("Warning: no confirmed tracks found; falling back to largest-person zoom.")
+        return None
+
+    coverage = selected_stats.frames_seen / max(1, total_frames) * 100
+    log_message(
+        "Target track selected: "
+        f"id={selected_stats.track_id}, "
+        f"frames={selected_stats.frames_seen}/{total_frames} ({coverage:.1f}%)"
+    )
+    return TargetTrackPlan(
+        track_id=selected_stats.track_id,
+        stats=selected_stats,
+        frame_bboxes=bboxes_by_track.get(selected_stats.track_id, {}),
+    )
+
+
 def identity_zoom_info(width: int, height: int) -> dict:
     """Return zoom metadata that maps frame coordinates directly."""
     return {
@@ -339,10 +512,40 @@ def bbox_area(bbox) -> int:
     return max(0, int(bbox[2])) * max(0, int(bbox[3]))
 
 
-def select_primary_fast_pose(pose_results):
-    """Select the largest detected person from full-frame pose results."""
+def pose_result_for_bbox(
+    pose_results: list[tuple[dict, dict]],
+    bbox: Optional[BBox],
+) -> Optional[tuple[dict, dict]]:
+    """Find the pose result that best matches a detector/tracker bbox."""
+    if bbox is None:
+        return None
+
+    best_result = None
+    best_iou = 0.0
+    for result in pose_results:
+        entry, _analysis = result
+        entry_bbox = entry.get("detection_bbox")
+        if entry_bbox == bbox:
+            return result
+        score = bbox_iou(entry_bbox, bbox)
+        if score > best_iou:
+            best_iou = score
+            best_result = result
+
+    if best_result is not None and best_iou > 0.05:
+        return best_result
+    return None
+
+
+def select_primary_fast_pose(
+    pose_results: list[tuple[dict, dict]],
+    target_bbox: Optional[BBox] = None,
+) -> Optional[tuple[dict, dict]]:
+    """Select the target pose result from full-frame pose results."""
     if not pose_results:
         return None
+    if target_bbox is not None:
+        return pose_result_for_bbox(pose_results, target_bbox)
     return max(
         pose_results,
         key=lambda item: bbox_area(item[0].get("detection_bbox")),
@@ -376,44 +579,34 @@ def bbox_iou(a, b) -> float:
     return inter_area / union_area
 
 
-def pose_entry_for_bbox(landmarks_data, bbox):
-    """Find the pose entry that was estimated from a detector bbox."""
-    if bbox is None:
-        return None
-    best_entry = None
-    best_iou = 0.0
-    for entry in landmarks_data:
-        entry_bbox = entry.get("detection_bbox")
-        if entry_bbox == bbox:
-            return entry
-        score = bbox_iou(entry_bbox, bbox)
-        if score > best_iou:
-            best_iou = score
-            best_entry = entry
-    if best_entry is not None and best_iou > 0.1:
-        return best_entry
-    return landmarks_data[0] if landmarks_data else None
-
-
-def process_fast_frame(frame, pose_backend, zoom_tracker, width: int, height: int):
+def process_fast_frame(
+    frame,
+    pose_backend,
+    zoom_tracker,
+    width: int,
+    height: int,
+    target_bbox: Optional[BBox] = None,
+):
     """Process one frame with full-frame YOLO11-Pose only.
 
     This skips the separate YOLOv8 detector, Deep SORT, and ROI pose calls.
     """
     pose_results = pose_backend.estimate_full_frame(frame)
-    primary = select_primary_fast_pose(pose_results)
+    primary = select_primary_fast_pose(pose_results, target_bbox)
     primary_entry = primary[0] if primary is not None else None
     current_analysis = primary[1] if primary is not None else None
 
     if zoom_tracker is not None:
-        target_bbox = primary_entry.get("detection_bbox") if primary_entry else None
+        zoom_bbox = target_bbox
+        if zoom_bbox is None and primary_entry is not None:
+            zoom_bbox = primary_entry.get("detection_bbox")
         target_center = (
             frame_center_from_entry(primary_entry)
             if primary_entry is not None else None
         )
         output_frame, zoom_info = zoom_tracker.process_bbox(
             frame,
-            target_bbox,
+            zoom_bbox,
             target_center,
         )
     else:
@@ -444,6 +637,7 @@ def process_video(
     video_file: str = None,
     high_precision: bool = False,
     fast_mode: bool = False,
+    target_mode: Optional[str] = None,
 ):
     """Main processing function for video input.
 
@@ -451,9 +645,15 @@ def process_video(
         video_file: Video filename in input/ directory. Defaults to "video.mp4".
         high_precision: If True, use frame interpolation for higher accuracy.
         fast_mode: If True, use full-frame YOLO11-Pose without Deep SORT.
+        target_mode: "longest" locks zoom to the longest visible track.
     """
     if video_file is None:
         video_file = "video.mp4"
+    if target_mode is None:
+        target_mode = TARGET_SELECTION_MODE
+    target_mode = target_mode.lower().strip()
+    if target_mode not in ("longest", "largest"):
+        raise ValueError(f"Unsupported target_mode: {target_mode}")
 
     DEVICE, USE_CUDA, DEVICE_STR = resolve_device(DEVICE_PREFERENCE)
 
@@ -474,7 +674,10 @@ def process_video(
     else:
         log_message("  - YOLO: CPU")
 
-    if fast_mode:
+    if fast_mode and target_mode == "longest" and ZOOM_ENABLED:
+        log_message("  - Deep SORT: first-pass target selection")
+        log_message("  - Fast mode: full-frame YOLO11-Pose, ROI preprocessing/TTA skipped")
+    elif fast_mode:
         log_message("  - Deep SORT: disabled (fast mode)")
         log_message("  - Fast mode: full-frame YOLO11-Pose, ROI preprocessing/TTA skipped")
     elif DEVICE_STR == "cuda":
@@ -483,6 +686,7 @@ def process_video(
         log_message("  - Deep SORT: CPU" + (" (MPS not supported)" if DEVICE_STR == "mps" else ""))
 
     log_message("  - Pose: YOLO11-Pose")
+    log_message(f"  - Target selection: {target_mode}")
     log_message("=" * 40)
 
     pose_backend = get_backend(
@@ -554,44 +758,52 @@ def process_video(
         pose_backend.close()
         return
 
-    yolo_model = None
-    tracker = None
-    if not fast_mode:
-        yolo_model = load_yolo_model(DEVICE, USE_CUDA)
-
-        # Deep SORT tracker: GPU acceleration is CUDA-only, not supported on MPS.
-        tracker_kwargs = {
-            "max_age": DEEPSORT_MAX_AGE,
-            "n_init": DEEPSORT_N_INIT,
-            "nms_max_overlap": 1.0,
-            "embedder": "mobilenet",
-            "half": (DEVICE_STR == "cuda"),
-            "bgr": True,
-        }
-        if "embedder_gpu" in inspect.signature(DeepSort).parameters:
-            tracker_kwargs["embedder_gpu"] = (DEVICE_STR == "cuda")
-        tracker = DeepSort(**tracker_kwargs)
-
-    latest_pose_analysis = None
-    best_score = -1
-    best_frame = None
-    best_frame_number = 0
-
-    start_time = time.time()
-
-    log_message("処理を開始します")
-    if high_precision:
-        log_message("高精度モード: フレーム補間を使用（将来実装予定）")
-    if fast_mode:
-        log_message("高速モード: YOLOv8検出、Deep SORT、ROI前処理/TTAを省略")
-    log_message("処理中...")
-
     if DEVICE_STR == "cuda":
         yolo_device, yolo_half = 0, True
     elif DEVICE_STR == "mps":
         yolo_device, yolo_half = "mps", False
     else:
         yolo_device, yolo_half = "cpu", False
+
+    yolo_model = None
+    if not fast_mode or (ZOOM_ENABLED and target_mode == "longest"):
+        yolo_model = load_yolo_model(DEVICE, USE_CUDA)
+
+    start_time = time.time()
+    target_plan = None
+    active_target_mode = target_mode
+    if ZOOM_ENABLED and target_mode == "longest":
+        log_message("主対象選択: 最長出演 track を事前解析しています")
+        target_plan = build_longest_track_plan(
+            video_path,
+            width,
+            height,
+            total_frames,
+            yolo_model,
+            yolo_device,
+            yolo_half,
+            DEVICE_STR,
+        )
+        if target_plan is None:
+            active_target_mode = "largest"
+
+    tracker = None
+    if not fast_mode and active_target_mode == "largest":
+        tracker = create_deepsort_tracker(DEVICE_STR)
+
+    latest_pose_analysis = None
+    best_score = -1
+    best_frame = None
+    best_frame_number = 0
+
+    log_message("処理を開始します")
+    if high_precision:
+        log_message("高精度モード: フレーム補間を使用（将来実装予定）")
+    if fast_mode and active_target_mode == "longest":
+        log_message("高速モード: full-frame姿勢推定と事前選択した主対象bboxを使用")
+    elif fast_mode:
+        log_message("高速モード: YOLOv8検出、Deep SORT、ROI前処理/TTAを省略")
+    log_message("処理中...")
 
     pbar = tqdm(total=total_frames, desc="Processing", unit="frame")
     while True:
@@ -603,32 +815,49 @@ def process_video(
         pbar.update(1)
 
         if fast_mode:
+            target_bbox = (
+                target_plan.bbox_for_frame(current_frame)
+                if target_plan is not None and active_target_mode == "longest" else None
+            )
             output_frame, latest_pose_analysis = process_fast_frame(
                 frame,
                 pose_backend,
                 zoom_tracker,
                 width,
                 height,
+                target_bbox,
             )
         else:
             rects = run_yolo_detection(yolo_model, frame, yolo_device, yolo_half)
 
-            detections = [([x, y, w, h], 1.0, 'person') for (x, y, w, h) in rects]
-            tracks = tracker.update_tracks(detections, frame=frame)
+            tracks = []
+            if tracker is not None:
+                detections = [([x, y, w, h], 1.0, 'person') for (x, y, w, h) in rects]
+                tracks = tracker.update_tracks(detections, frame=frame)
 
             # Step 1: Pose estimation through the selected backend.
+            pose_results = []
             landmarks_data = []
             timestamp_ms = int(current_frame * 1000 / fps)
             for bbox in rects:
                 entry, analysis = pose_backend.estimate(frame, bbox, timestamp_ms=timestamp_ms)
                 if entry is not None and analysis is not None:
-                    latest_pose_analysis = analysis
+                    pose_results.append((entry, analysis))
                     landmarks_data.append(entry)
 
             output_frame = frame.copy()
+            current_pose_analysis = latest_pose_analysis
             if zoom_tracker is not None:
-                target_bbox = zoom_tracker.select_main_target(tracks, rects)
-                target_entry = pose_entry_for_bbox(landmarks_data, target_bbox)
+                if active_target_mode == "longest" and target_plan is not None:
+                    target_bbox = target_plan.bbox_for_frame(current_frame)
+                else:
+                    target_bbox = zoom_tracker.select_main_target(tracks, rects)
+
+                target_result = pose_result_for_bbox(pose_results, target_bbox)
+                target_entry = target_result[0] if target_result is not None else None
+                current_pose_analysis = (
+                    target_result[1] if target_result is not None else latest_pose_analysis
+                )
                 target_center = (
                     frame_center_from_entry(target_entry)
                     if target_entry is not None else None
@@ -640,6 +869,10 @@ def process_video(
                 )
             else:
                 zoom_info = identity_zoom_info(width, height)
+                if pose_results:
+                    current_pose_analysis = pose_results[0][1]
+
+            latest_pose_analysis = current_pose_analysis
 
             # Step 3: Draw on the zoomed frame.
             for (x, y, w, h) in rects:
