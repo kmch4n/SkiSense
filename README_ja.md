@@ -13,6 +13,8 @@
 
 SkiSense は映像中のスキーヤーを検出し、姿勢を推定して、主要な関節角度（膝・股関節・足首・肩の傾き）を基礎スキーの理想範囲と照合してスコア化する。自動採点ではなく、可視化と定量フィードバックのためのツールである。注釈付き動画・最高スコアのフレーム・関節ごとの数値が出力される。
 
+開発の背景・設計判断・評価ロジック・苦労した点といった詳細は [`docs/project_details_ja.md`](docs/project_details_ja.md) にまとめている。
+
 ## 主な機能
 
 - **人物検出** — YOLOv8x
@@ -71,11 +73,6 @@ SKISENSE_POSE_BACKEND=yolo11   # YOLO11-Pose（2D・CPU/MPS/CUDA 可）
 3. **描画** — `ZoomTracker` のズームを適用し、骨格・bbox を `transform_point_to_zoom()` 経由で描画、情報パネルを重畳
 
 主要モジュール: `config.py` / `pose_topology.py` / `backends/` / `pose_analyzer.py` / `zoom_tracker.py` / `main.py` / `image_processor.py`。
-
-## 詳細
-
-設計思想・処理パイプラインの詳細・評価ロジック・開発で苦労した点・今後の改善予定は
-[`docs/project_details_ja.md`](docs/project_details_ja.md) にまとめている。
 
 ## License
 
