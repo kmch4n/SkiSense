@@ -95,19 +95,40 @@ POSE_VISIBILITY_THRESHOLD = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD', 0.5
 POSE_VISIBILITY_THRESHOLD_LEGS = _get_float('SKISENSE_POSE_VISIBILITY_THRESHOLD_LEGS', 0.3, min_val=0.0, max_val=1.0)  # Looser threshold for leg joints (often occluded in ski poses)
 ROI_PADDING_RATIO = _get_float('SKISENSE_ROI_PADDING', 0.3, min_val=0.0, max_val=1.0)  # ROI bbox expansion ratio for better pose accuracy
 
-# Preprocessing / TTA toggles (opt-in, validated as data-dependent on ski footage)
-CLAHE_ENABLED = _get_bool('SKISENSE_CLAHE_ENABLED', False)  # Apply CLAHE to ROI before pose estimation
-FLIP_TTA_ENABLED = _get_bool('SKISENSE_FLIP_TTA_ENABLED', False)  # Run pose estimation on horizontal flip too and pick best-visibility landmarks (doubles inference cost)
-
 # =============================================================================
 # Model Settings
 # =============================================================================
 YOLO_MODEL = "yolov8x.pt"           # YOLOv8 model file (person detection)
 
-# YOLO11-Pose model filename
+# Pose backend selection:
+#   - "sam3d":  SAM 3D Body (3D MHR-21, CUDA required, higher accuracy)
+#   - "yolo11": YOLO11-Pose (2D COCO-17, CPU/MPS/CUDA, faster, lighter)
+POSE_BACKEND = _get_str('SKISENSE_POSE_BACKEND', 'sam3d',
+                        valid_options=['sam3d', 'yolo11'])
+
+# --- SAM 3D Body settings (used when POSE_BACKEND == "sam3d") ---------------
+# Weights are gated on HuggingFace; request access on
+# https://huggingface.co/facebook/sam-3d-body-dinov3 and authenticate
+# locally with ``hf auth login`` before first run.
+SAM3D_HF_REPO = _get_str(
+    'SKISENSE_SAM3D_HF_REPO', 'facebook/sam-3d-body-dinov3',
+    valid_options=['facebook/sam-3d-body-dinov3', 'facebook/sam-3d-body-vith'],
+)
+# Toggle the hand-refinement decoder. SkiSense does not score hand
+# joints, so the cheaper body-only inference path is the default.
+SAM3D_USE_HAND_REFINE = _get_bool('SKISENSE_SAM3D_USE_HAND_REFINE', False)
+
+# --- YOLO11-Pose settings (used when POSE_BACKEND == "yolo11") --------------
+# Ultralytics auto-downloads the weights on first run; SkiSense caches
+# them under models/.
 YOLO_POSE_MODEL = _get_str('SKISENSE_YOLO_POSE_MODEL', 'yolo11x-pose.pt')
 YOLO_POSE_CONFIDENCE = _get_float('SKISENSE_YOLO_POSE_CONFIDENCE', 0.25,
                                    min_val=0.0, max_val=1.0)
+# Apply CLAHE to the ROI before pose estimation (opt-in; can amplify snow noise).
+CLAHE_ENABLED = _get_bool('SKISENSE_CLAHE_ENABLED', False)
+# Run pose estimation on the horizontal flip too and keep best-visibility
+# landmarks (doubles inference cost).
+FLIP_TTA_ENABLED = _get_bool('SKISENSE_FLIP_TTA_ENABLED', False)
 
 # =============================================================================
 # Zoom Settings (Center Tracking)

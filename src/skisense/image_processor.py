@@ -2,7 +2,7 @@
 
 Analyzes a single ski image (still frame) and saves the annotated result.
 Shares YOLO detection and drawing helpers with ``main.py`` and delegates
-pose estimation to the YOLO11-Pose backend.
+pose estimation to the SAM 3D Body backend.
 """
 import os
 import shutil
@@ -22,7 +22,7 @@ from .main import (
     resolve_device,
     run_yolo_detection,
 )
-from .pose_topology import COCO_17
+from .pose_topology import MHR_BODY
 
 
 def _pick_largest_bbox(rects):
@@ -51,6 +51,13 @@ def process_image(image_file: str = None):
     if use_gpu:
         log_message(f"GPU acceleration: enabled ({device})")
 
+    pose_backend = get_backend(
+        running_mode="image",
+        device=device,
+        use_gpu=use_gpu,
+        device_str=device_str,
+    )
+
     log_message("=" * 40)
     log_message("Component configuration:")
     if device_str == "cuda":
@@ -59,7 +66,7 @@ def process_image(image_file: str = None):
         log_message("  - YOLO: MPS GPU (half=False)")
     else:
         log_message("  - YOLO: CPU")
-    log_message("  - Pose: YOLO11-Pose")
+    log_message(f"  - Pose: {pose_backend.display_name}")
     log_message("=" * 40)
 
     image_path = os.path.join(INPUT_DIR, image_file)
@@ -82,12 +89,6 @@ def process_image(image_file: str = None):
     input_copy_path = os.path.join(output_dir, "image.jpg")
     shutil.copy2(image_path, input_copy_path)
 
-    pose_backend = get_backend(
-        running_mode="image",
-        device=device,
-        use_gpu=use_gpu,
-        device_str=device_str,
-    )
     yolo_model = load_yolo_model(device, use_gpu)
 
     if device_str == "cuda":
@@ -125,7 +126,7 @@ def process_image(image_file: str = None):
                 landmarks_entry["landmarks"],
                 landmarks_entry["bbox"],
                 zoom_info,
-                topology=landmarks_entry.get("topology", COCO_17),
+                topology=landmarks_entry.get("topology", MHR_BODY),
             )
             draw_info_panel(output_frame, analysis)
             log_message(f"姿勢スコア: {analysis['score']}/100")

@@ -17,7 +17,7 @@ from .config import (
 )
 from ._logging import DEBUG, SuppressStderr
 from .backends import get_backend
-from .pose_topology import COCO_17, PoseTopology
+from .pose_topology import MHR_BODY, PoseTopology
 from .zoom_tracker import ZoomTracker
 
 import inspect
@@ -46,7 +46,7 @@ def log_message(message: str):
 
 
 # Module-level alias for callers that import the active skeleton edges.
-POSE_CONNECTIONS = COCO_17.connections
+POSE_CONNECTIONS = MHR_BODY.connections
 BBox = Tuple[int, int, int, int]
 
 
@@ -111,7 +111,7 @@ class TargetTrackPlan:
         return self.frame_bboxes.get(frame_number)
 
 
-def visibility_threshold_for(index: int, topology: PoseTopology = COCO_17) -> float:
+def visibility_threshold_for(index: int, topology: PoseTopology = MHR_BODY) -> float:
     """Return the visibility threshold that applies to a landmark index."""
     if index in topology.leg_indices:
         return POSE_VISIBILITY_THRESHOLD_LEGS
@@ -204,7 +204,7 @@ def transform_point_to_zoom(point, bbox, zoom_info):
     return (zoom_x, zoom_y)
 
 
-def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info, topology: PoseTopology = COCO_17):
+def draw_landmarks_on_zoomed_frame(frame, landmarks, bbox, zoom_info, topology: PoseTopology = MHR_BODY):
     """Draw pose landmarks on a (possibly zoomed) frame.
 
     Args:
@@ -292,7 +292,7 @@ def draw_target_overlay(frame, target_bbox, target_entry, zoom_info):
             target_entry["landmarks"],
             target_entry["bbox"],
             zoom_info,
-            topology=target_entry.get("topology", COCO_17),
+            topology=target_entry.get("topology", MHR_BODY),
         )
 
 
@@ -605,9 +605,10 @@ def process_fast_frame(
     height: int,
     target_bbox: Optional[BBox] = None,
 ):
-    """Process one frame with full-frame YOLO11-Pose only.
+    """Process one frame with full-frame SAM 3D Body inference only.
 
-    This skips the separate YOLOv8 detector, Deep SORT, and ROI pose calls.
+    This skips the separate YOLOv8 detector, Deep SORT, and ROI pose
+    calls. SAM 3D Body's bundled detector handles person localisation.
     """
     pose_results = pose_backend.estimate_full_frame(frame)
     primary = select_primary_fast_pose(pose_results, target_bbox)
@@ -647,7 +648,7 @@ def process_video(
     Args:
         video_file: Video filename in input/ directory. Defaults to "video.mp4".
         high_precision: If True, use frame interpolation for higher accuracy.
-        fast_mode: If True, use full-frame YOLO11-Pose without Deep SORT.
+        fast_mode: If True, use full-frame SAM 3D Body without Deep SORT.
         target_mode: "longest" locks zoom to the longest visible track.
     """
     if video_file is None:
@@ -667,6 +668,13 @@ def process_video(
     if USE_CUDA:
         log_message(f"GPU acceleration: enabled ({DEVICE})")
 
+    pose_backend = get_backend(
+        running_mode="video",
+        device=DEVICE,
+        use_gpu=USE_CUDA,
+        device_str=DEVICE_STR,
+    )
+
     log_message("=" * 40)
     log_message("Component configuration:")
 
@@ -679,25 +687,18 @@ def process_video(
 
     if fast_mode and target_mode == "longest" and ZOOM_ENABLED:
         log_message("  - Deep SORT: first-pass target selection")
-        log_message("  - Fast mode: full-frame YOLO11-Pose, ROI preprocessing/TTA skipped")
+        log_message("  - Fast mode: full-frame pose, per-frame ROI step skipped")
     elif fast_mode:
         log_message("  - Deep SORT: disabled (fast mode)")
-        log_message("  - Fast mode: full-frame YOLO11-Pose, ROI preprocessing/TTA skipped")
+        log_message("  - Fast mode: full-frame pose, per-frame ROI step skipped")
     elif DEVICE_STR == "cuda":
         log_message("  - Deep SORT: CUDA GPU")
     else:
         log_message("  - Deep SORT: CPU" + (" (MPS not supported)" if DEVICE_STR == "mps" else ""))
 
-    log_message("  - Pose: YOLO11-Pose")
+    log_message(f"  - Pose: {pose_backend.display_name}")
     log_message(f"  - Target selection: {target_mode}")
     log_message("=" * 40)
-
-    pose_backend = get_backend(
-        running_mode="video",
-        device=DEVICE,
-        use_gpu=USE_CUDA,
-        device_str=DEVICE_STR,
-    )
 
     video_path = os.path.join(INPUT_DIR, video_file)
     cap = cv2.VideoCapture(video_path)
@@ -803,9 +804,9 @@ def process_video(
     if high_precision:
         log_message("高精度モード: フレーム補間を使用（将来実装予定）")
     if fast_mode and active_target_mode == "longest":
-        log_message("高速モード: full-frame姿勢推定と事前選択した主対象bboxを使用")
+        log_message("高速モード: SAM 3D Body 内蔵検出と事前選択した主対象bboxを使用")
     elif fast_mode:
-        log_message("高速モード: YOLOv8検出、Deep SORT、ROI前処理/TTAを省略")
+        log_message("高速モード: YOLOv8検出と Deep SORT を省略し SAM 3D Body 単体で実行")
     log_message("処理中...")
 
     pbar = tqdm(total=total_frames, desc="Processing", unit="frame")

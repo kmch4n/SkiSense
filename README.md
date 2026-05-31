@@ -1,198 +1,98 @@
 # SkiSense
 
-スキー滑走映像から滑走者の姿勢を推定・可視化し、フォームを定量的に評価するコンピュータビジョンツールである。
+**English** | [日本語](README_ja.md)
+
+A computer-vision tool that estimates a skier's posture from video and
+quantitatively evaluates their form via joint angles.
 
 ![SkiSense preview](images/skier.gif)
 ![SkiSense preview](images/skier2.gif)
 
----
+## Overview
 
-## 開発の背景
+SkiSense detects a skier in a clip, estimates their pose, and scores key
+joint angles (knee, hip, ankle, shoulder tilt) against ideal ranges drawn
+from competitive *kihon* (technical) skiing. It is a visualization and
+quantitative-feedback tool, not an automatic judge. The annotated video,
+the best-scoring frame, and per-joint readouts are written to disk.
 
-本プロジェクトの開発者は幼少期からスキーを続けており、大学ではスキーサークルに所属し **基礎スキー**（フォームの美しさと技術点を競う競技種目）に取り組んでいる。基礎スキーには一定の採点基準が存在するものの、最終的な点数は審判の主観に委ねられる部分が大きく、滑走者自身が客観的に自己評価を行う手段は限られている。一方、日本ではスキー滑走映像を分析・可視化するツールは普及しておらず、競技者が日常的に利用できる環境は整っていない。
+## Features
 
-### 当初の目的とその断念
+- **Person detection** — YOLOv8x
+- **Pose estimation** — selectable backend: SAM 3D Body (3D MHR-21,
+  default) or YOLO11-Pose (2D COCO-17). See [Pose backends](#pose-backends)
+- **Joint-angle evaluation** — knee / hip / ankle in 3D, shoulder tilt in 2D
+- **Overall score** — 0–100 over the angles that can be measured
+- **Multi-person tracking** — Deep SORT keeps a stable ID across frames
+- **Auto zoom & centering** — keeps the skier's torso centered
+- **Best-shot extraction** — saves the highest-scoring frame
 
-当初は **大量の滑走データと検定点数の組合せを学習させ、AI が自動採点を行うツール** を目指していた。しかし、以下の制約が実用レベルでの達成を阻むことが判明した。
+## Quick start
 
-- 映像からは斜度が判断できない
-- 雪面状況（硬さ・湿り気・凹凸）は実際に滑走しなければ評価できない
-- 検定基準を再現するには学習データの質・量ともに不足している
-
-### 方針転換と現在の成果
-
-以上の検証結果を踏まえ、プロジェクトのスコープを **「自動採点」から「姿勢の可視化と定量評価」に再定義** した。現在の SkiSense は、関節角度を数値で示し、理想的な範囲との乖離を色分けで提示する可視化ツールとして機能している。
-
-YOLO11-Pose への移行により、深い内傾姿勢、内脚の遮蔽、スキー板やストックの干渉がある映像でも、より安定して骨格を検出できるようになった。開発者自身の練習でも、左右の腕の動きの対称性、内傾角、内膝の倒し込みといった、自覚しにくい動きを客観的に確認できるようになっている。
-
-**開発期間:** 2026 年 1 月開始、継続改善中。
-
----
-
-## 主な機能
-
-- **人物検出** — YOLOv8x によるスキーヤー検出
-- **骨格推定** — YOLO11-Pose による COCO-17 キーポイント推定
-- **関節角度評価** — 膝・股関節の屈曲角と肩の水平傾き
-- **総合スコア** — 算出可能な項目を 0〜100 点で評価
-- **複数人トラッキング** — Deep SORT によるフレーム間の ID 一貫性
-- **自動ズーム・センタリング** — 胴体中心を画面中央に固定し、人物 bbox 面積が画面の約 35% になるよう動的ズーム
-- **ベストショット抽出** — 最高スコアのフレームを自動保存
-
----
-
-## 実行モード
-
-通常モードでは、YOLOv8x による人物検出、Deep SORT による追跡、YOLO11-Pose による ROI 単位の骨格推定を順に実行する。追跡の安定性を優先する標準経路である。
+PyTorch must be installed first, matching your CUDA build:
 
 ```bash
-python run.py video.mp4
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
+# Only needed for the SAM 3D Body backend (see docs/pose_backends.md):
+pip install -r requirements-sam3d.txt
 ```
 
-高速モードでは、`--fast` を付ける。ROI 前処理や Flip TTA を省略し、YOLO11-Pose をフルフレームに 1 回だけ適用するため、GPU により大きな推論単位を渡しやすい。既定では事前に YOLOv8x + Deep SORT で主対象を選ぶため、混雑した映像でもズーム対象を固定しやすい。
+Run:
 
 ```bash
-python run.py --fast video.mp4
+python run.py video.mp4            # process a video (input/video.mp4 by default)
+python run.py --fast video.mp4     # skip per-frame detect/track; one pass per frame
+python run.py skier.jpg --image    # process a single image
 ```
 
-高速モードの出力動画は `video_pose_fast.mp4` として保存される。
+Output is written to `output/YYYYMMDD_HHMMSS/` (`video_pose.mp4`,
+`best_shot.jpg`, and a copy of the input).
 
-最速の旧挙動に戻す場合は、現在フレームで最も大きい人物 bbox を選ぶ `largest` モードを指定する。
+> The default `sam3d` backend uses gated HuggingFace weights: request
+> access to `facebook/sam-3d-body-dinov3` and run `hf auth login` once
+> before the first run. To avoid this (or to run on CPU), use the
+> `yolo11` backend instead.
+
+## Pose backends
+
+The pose engine is selected in `.env`:
 
 ```bash
-python run.py --fast --target-mode largest video.mp4
+SKISENSE_POSE_BACKEND=sam3d    # default: SAM 3D Body (3D, CUDA required)
+SKISENSE_POSE_BACKEND=yolo11   # YOLO11-Pose (2D, runs on CPU/MPS/CUDA)
 ```
 
----
+- **SAM 3D Body** — 3D MHR keypoints + body mesh; view-invariant joint
+  angles including the ankle. CUDA required; ~1–2 s/frame.
+- **YOLO11-Pose** — 2D COCO-17 keypoints; fast and CPU-capable, but the
+  ankle angle is `N/A` (no foot landmark).
 
-## ズーム仕様
+Full comparison, settings, and trade-offs:
+[`docs/pose_backends.md`](docs/pose_backends.md).
 
-ズーム有効時は、肩中点と腰中点の中間を **胴体中心** として扱い、この点ができるだけ画面中央に来るように crop する。倍率は固定値ではなく、対象スキーヤーの bbox 面積が出力フレーム面積の約 35% になるよう自動計算する。対象が画面端にいる場合は、元映像外を複製せず、crop を元フレーム内に収めて実ピクセルを優先する。
+## Architecture
 
-```bash
-SKISENSE_ZOOM_TARGET_AREA_RATIO=0.35
-SKISENSE_ZOOM_MAX_SCALE=5.0
-SKISENSE_TARGET_SELECTION_MODE=longest
-```
+Each frame runs a three-step pipeline:
 
-`SKISENSE_TARGET_SELECTION_MODE=longest` では、最初に YOLOv8x + Deep SORT で全フレームを走査し、最も長く映っている track を主対象として固定する。通常モードではその track の bbox に ROI 姿勢推定を対応付け、`--fast` モードでは full-frame YOLO11-Pose の結果から同じ bbox に最も近い人物を対応付ける。対象を見失った場合は別人へ即座に切り替えず、最大 30 フレームは最後の位置を維持し、その後は画面中央・等倍に戻る。
+1. **Detection & tracking** — YOLOv8x detects persons; Deep SORT assigns
+   persistent track IDs.
+2. **Pose estimation** — the selected backend returns keypoints (3D + 2D
+   for SAM 3D Body, 2D for YOLO11-Pose); `pose_analyzer` evaluates joint
+   angles.
+3. **Rendering** — `ZoomTracker` applies smooth zoom, skeleton/bbox are
+   drawn through the single `transform_point_to_zoom()` choke point, and
+   the info panel is overlaid.
 
-検出と追跡は複数人に対して行うが、出力動画に描画する bbox、骨格、スコアパネルは主対象の 1 人だけに制限する。これにより、混雑したゲレンデで別人の骨格線や bbox が画面端・情報パネル上に入り込むことを避ける。
+Key modules: `config.py`, `pose_topology.py`, `backends/`,
+`pose_analyzer.py`, `zoom_tracker.py`, `main.py`, `image_processor.py`.
 
-`SKISENSE_TARGET_SELECTION_MODE=largest` または `--target-mode largest` を使うと、事前走査を行わず、現在フレームで最も大きい人物 bbox を主対象にする旧挙動になる。
+## More (日本語)
 
----
-
-## 技術スタック
-
-| 技術 | 役割 | 採用理由 |
-|------|------|---------|
-| [YOLOv8x](https://github.com/ultralytics/ultralytics) | 人物検出 | 高精度で複数人シーンでも安定。Ultralytics が公開する学習済みモデルを使用 |
-| [YOLO11-Pose](https://docs.ultralytics.com/tasks/pose/) | 骨格推定 | COCO-17 キーポイント。スキー特有の深い内傾姿勢や遮蔽に強く、GPU 推論にも統一しやすい |
-| [Deep SORT](https://github.com/nwojke/deep_sort) | トラッキング | フレーム間で検出された人物に一貫した ID を付与 |
-| [OpenCV](https://opencv.org/) | 動画入出力・描画 | 業界標準の CV ライブラリ |
-| [PyTorch](https://pytorch.org/) | DL バックエンド | CUDA / MPS / CPU の統一 API |
-| python-dotenv | 設定管理 | 設定値をコードから分離し、環境別の切替を容易にする |
-
-### YOLO11-Pose
-
-SkiSense は YOLO11-Pose を唯一の姿勢推定エンジンとして使用する。初回実行時に `yolo11x-pose.pt`（約 118MB）が Ultralytics から自動ダウンロードされ、`models/` 配下にキャッシュされる。
-
-```bash
-SKISENSE_YOLO_POSE_MODEL=yolo11x-pose.pt
-SKISENSE_YOLO_POSE_CONFIDENCE=0.25
-```
-
-COCO-17 トポロジには足先ランドマークが存在しないため、足首角度スコアは `N/A` として総合スコアから除外される。現状では、足首角度を維持することよりも、スキー姿勢での検出安定性を優先している。
-
----
-
-## アーキテクチャ
-
-### 処理パイプライン（フレーム単位）
-
-フレーム単位で以下の 3 ステップを順に実行する。
-
-1. **検出・トラッキング** — YOLOv8 で人物を検出し、Deep SORT により持続的な ID を割り当てる
-2. **骨格推定** — 検出領域（ROI）をクロップし、YOLO11-Pose で COCO-17 キーポイントを推定したうえで `pose_analyzer` にて関節角度を評価する
-3. **描画** — ZoomTracker によるズーム変換を適用し、骨格線と bbox を描画、最後に情報パネル（スコア・角度）を重ねる
-
-### モジュール構成
-
-- **`config.py`** — `.env` から全設定を読み込み、型変換とバリデーションを行う
-- **`pose_topology.py`** — COCO-17 のランドマーク構造を定義し、描画・評価の参照元にする
-- **`backends/`** — 姿勢推定 backend。現在は YOLO11-Pose 実装を内包し、将来の高精度 backend 追加に備える
-- **`pose_analyzer.py`** — 純粋関数による関節角度の計算と評価。副作用・I/O なし
-- **`zoom_tracker.py`** — EMA スムージングによる滑走者追尾。検出タイムアウト 30 フレーム
-- **`main.py`** — オーケストレーション。デバイス解決、backend 取得、フレームループ、動画 I/O
-- **`image_processor.py`** — 静止画向けの単発解析フロー
-
-### デバイス解決ロジック
-
-`auto` モード時の優先順位は **MPS > CUDA > CPU**。ただしコンポーネントごとに制約が異なる。
-
-- **YOLOv8x / YOLO11-Pose** は CUDA / MPS / CPU に対応
-- **YOLO 系モデル** は CUDA 時のみ `half=True`、MPS では `half=False` が必須
-- **Deep SORT** は MPS 非対応のため、macOS でも CPU フォールバック
-
----
-
-## 姿勢評価ロジック
-
-`pose_analyzer.py` は以下の関節角度を評価する。理想範囲は基礎スキーの一般的なフォーム指導に基づいて設定している。
-
-| 評価項目 | Good | Caution | Fix |
-|---------|------|---------|-----|
-| 膝屈曲角（左右） | 90°〜120° | 80°〜90° / 120°〜140° | それ以外 |
-| 股関節角度（左右、前傾） | 100°〜130° | 90°〜100° / 130°〜150° | それ以外 |
-| 肩の水平傾き | ±10° 以内 | ±20° 以内 | それ以上 |
-
-### スコア化
-
-各項目を Good=100 / Caution=50 / Fix=0 で採点し、算出可能な項目の平均を取って **0〜100 点** の総合スコアを算出する。キーポイント confidence が閾値未満の項目は計算不能として採点から除外される。
-
-COCO-17 では足先ランドマークが取得できないため、足首角度は評価対象外である。足首の前圧そのものは基礎スキーにおいて重要だが、現在の SkiSense では映像上でより安定して取得できる膝・股関節・肩の指標を優先している。
-
-### ドメイン知識の反映
-
-- **前傾姿勢** は股関節角度で測定。猫背にならず、かつ腰を引かない範囲を Good とする
-- **肩の水平維持** は左右軸の安定性指標。内傾時も肩が過度に傾かないことが理想
-- **膝の屈曲** は適度なクッションと荷重の指標
-
----
-
-## 開発で苦労したこと
-
-### 1. 当初目的からの方針転換
-
-AI 自動採点という当初目的は、映像単体では取得できない情報（斜度・雪面状況）と学習データの制約により達成困難であった。プロジェクトを完走させることを優先して妥協した機能を実装するよりも、**スコープそのものを再定義して確実に価値を出す** 判断に切り替えた。結果として、自己練習ツールとしての実用価値を獲得し、副次的ではあるが自身の技術向上という具体的な成果に結びついている。
-
-### 2. 座標変換の 3 段階管理
-
-滑走者を画面中央に追尾するためのズーム機能を後から追加した際、座標系の混乱が発生した。フレーム上の点は以下の 3 つの座標系で扱われる。
-
-1. **ROI 座標** — 検出された人物の bbox 内部の相対座標
-2. **フレーム座標** — 動画全体の絶対座標
-3. **ズーム座標** — 拡大・中心調整後の最終出力座標
-
-当初はズーム係数を各描画処理に散らばせて適用していたため、ランドマーク・bbox・情報パネル間で微妙な位置ずれが発生し、デバッグに苦しんだ。最終的には **`transform_point_to_zoom()`** に変換を一元化し、全ての座標は必ずこの関数を通過させる設計に改めた。これにより描画のずれは解消し、保守性も向上した。
-
-### 3. スキー姿勢に強い骨格推定への移行
-
-滑走映像は、深い内傾、内脚の遮蔽、スキー板やストックの干渉、雪面反射などにより、一般的な人物姿勢推定ではキーポイントが不安定になりやすい。検証の結果、YOLO11-Pose の方がスキー特有の姿勢で安定したため、SkiSense は YOLO11-Pose を標準かつ唯一の姿勢推定エンジンとして採用した。
-
-この移行により、足先ランドマークを使った足首角度評価は対象外になった。一方で、膝・股関節・肩の推定品質が改善し、実際の滑走映像に対する総合的な可視化価値は高まっている。
-
----
-
-## 今後の改善予定
-
-- **One-Euro フィルタ** による時間的スムージングの導入（キーポイント座標のジッター低減）
-- **Sapiens / ViTPose++** などの高精度 backend 追加検討
-- **自前データセットによるファインチューニング** — 基礎スキー特化のフォーム評価精度向上
-
----
+- Project background, design rationale, scoring logic, and lessons
+  learned (Japanese): [README_ja.md](README_ja.md) /
+  [`docs/project_details_ja.md`](docs/project_details_ja.md)
 
 ## License
 
-MIT License. 詳細は [LICENSE](LICENSE) を参照。
+MIT License. See [LICENSE](LICENSE).

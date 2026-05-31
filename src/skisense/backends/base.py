@@ -24,6 +24,7 @@ class PoseBackend(ABC):
     """
 
     topology: PoseTopology
+    display_name: str = "pose backend"
 
     @abstractmethod
     def estimate(

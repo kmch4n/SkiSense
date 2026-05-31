@@ -6,7 +6,7 @@ Usage:
 
 Options:
     --high     Enable high precision mode (frame interpolation, video only)
-    --fast     Enable fast full-frame YOLO11-Pose mode (video only)
+    --fast     Enable fast full-frame SAM 3D Body mode (video only)
     --target-mode {longest,largest}
                Select the zoom target strategy (video only)
     --image    Process a single image instead of a video
@@ -42,7 +42,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--fast", action="store_true",
-        help="Use fast full-frame YOLO11-Pose mode (video only)",
+        help="Use fast full-frame SAM 3D Body mode (video only)",
     )
     parser.add_argument(
         "--target-mode",

@@ -58,6 +58,7 @@ class Yolo11Backend(PoseBackend):
     """YOLO11-Pose backend emitting COCO-17 landmarks."""
 
     topology = COCO_17
+    display_name = "YOLO11-Pose (COCO-17)"
 
     def __init__(self, device=None, use_gpu: bool = False, device_str: str = "cpu"):
         self._device = device

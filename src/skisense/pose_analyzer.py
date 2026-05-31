@@ -2,11 +2,11 @@ import math
 
 import numpy as np
 
-from .pose_topology import COCO_17, PoseTopology
+from .pose_topology import MHR_BODY, PoseTopology
 
 # Landmarks commonly occluded in ski poses; re-exported for callers that
 # import this constant directly.
-LEG_LANDMARK_INDICES = COCO_17.leg_indices
+LEG_LANDMARK_INDICES = MHR_BODY.leg_indices
 
 # Color definitions (BGR format)
 COLORS = {
@@ -62,20 +62,29 @@ def calculate_horizontal_angle(p1, p2):
 
 
 def get_landmark_point(landmarks, index, width, height):
-    """
-    Get pixel coordinates from landmark
+    """Return ROI-pixel ``(x, y)`` coordinates for a landmark.
 
-    Parameters:
-        landmarks: List of pose landmarks
-        index: Landmark index
-        width: Image width
-        height: Image height
-
-    Returns:
-        (x, y) pixel coordinates
+    Landmarks expose ``x`` and ``y`` normalised to the padded bbox, so
+    callers multiply by the bbox dimensions to recover pixel coordinates
+    suitable for drawing or 2D image-plane measurements such as shoulder
+    tilt.
     """
     landmark = landmarks[index]
     return (int(landmark.x * width), int(landmark.y * height))
+
+
+def get_landmark_point_3d(landmarks, index):
+    """Return ``(x3d, y3d, z3d)`` in the backend's 3D frame.
+
+    SAM 3D Body emits keypoints in MHR camera-space metres. The exact
+    units do not matter for angle calculations because ``calculate_angle``
+    works on direction vectors. Returns ``None`` when the landmark lacks
+    3D coordinates (e.g. a legacy 2D backend).
+    """
+    landmark = landmarks[index]
+    if not hasattr(landmark, "x3d"):
+        return None
+    return (landmark.x3d, landmark.y3d, landmark.z3d)
 
 
 def is_landmark_visible(landmarks, index: int, threshold: float) -> bool:
@@ -146,7 +155,7 @@ def analyze_ski_pose(
     height,
     visibility_threshold: float = 0.5,
     visibility_threshold_legs: float = None,
-    topology: PoseTopology = COCO_17,
+    topology: PoseTopology = MHR_BODY,
 ):
     """
     Analyze ski posture and return angle measurements.
@@ -181,21 +190,36 @@ def analyze_ski_pose(
     }
 
     try:
+        # 2D image-plane points: used for shoulder tilt, zoom targets, and
+        # backends that do not provide 3D coordinates.
         left_shoulder = get_landmark_point(landmarks, idx["left_shoulder"], width, height)
         right_shoulder = get_landmark_point(landmarks, idx["right_shoulder"], width, height)
         left_hip = get_landmark_point(landmarks, idx["left_hip"], width, height)
         right_hip = get_landmark_point(landmarks, idx["right_hip"], width, height)
-        left_knee = get_landmark_point(landmarks, idx["left_knee"], width, height)
-        right_knee = get_landmark_point(landmarks, idx["right_knee"], width, height)
-        left_ankle = get_landmark_point(landmarks, idx["left_ankle"], width, height)
-        right_ankle = get_landmark_point(landmarks, idx["right_ankle"], width, height)
+
+        def _angle_point(index: int):
+            """Pick 3D coords for true joint angles when the topology is 3D."""
+            if topology.is_3d:
+                point = get_landmark_point_3d(landmarks, index)
+                if point is not None:
+                    return point
+            return get_landmark_point(landmarks, index, width, height)
+
+        ls_a = _angle_point(idx["left_shoulder"])
+        rs_a = _angle_point(idx["right_shoulder"])
+        lh_a = _angle_point(idx["left_hip"])
+        rh_a = _angle_point(idx["right_hip"])
+        lk_a = _angle_point(idx["left_knee"])
+        rk_a = _angle_point(idx["right_knee"])
+        la_a = _angle_point(idx["left_ankle"])
+        ra_a = _angle_point(idx["right_ankle"])
 
         if topology.has_foot:
-            left_foot = get_landmark_point(landmarks, idx["left_foot"], width, height)
-            right_foot = get_landmark_point(landmarks, idx["right_foot"], width, height)
+            lf_a = _angle_point(idx["left_foot"])
+            rf_a = _angle_point(idx["right_foot"])
         else:
-            left_foot = None
-            right_foot = None
+            lf_a = None
+            rf_a = None
 
         def _visible(*indices: int) -> bool:
             for i in indices:
@@ -208,21 +232,24 @@ def analyze_ski_pose(
             return True
 
         left_knee_angle = (
-            calculate_angle(left_hip, left_knee, left_ankle)
+            calculate_angle(lh_a, lk_a, la_a)
             if _visible(idx["left_hip"], idx["left_knee"], idx["left_ankle"]) else None
         )
         right_knee_angle = (
-            calculate_angle(right_hip, right_knee, right_ankle)
+            calculate_angle(rh_a, rk_a, ra_a)
             if _visible(idx["right_hip"], idx["right_knee"], idx["right_ankle"]) else None
         )
         left_hip_angle = (
-            calculate_angle(left_shoulder, left_hip, left_knee)
+            calculate_angle(ls_a, lh_a, lk_a)
             if _visible(idx["left_shoulder"], idx["left_hip"], idx["left_knee"]) else None
         )
         right_hip_angle = (
-            calculate_angle(right_shoulder, right_hip, right_knee)
+            calculate_angle(rs_a, rh_a, rk_a)
             if _visible(idx["right_shoulder"], idx["right_hip"], idx["right_knee"]) else None
         )
+        # Shoulder tilt is intentionally evaluated in the 2D image plane:
+        # it expresses the camera-perceived horizon tilt that the viewer
+        # sees in the output frame.
         shoulder_tilt = (
             calculate_horizontal_angle(left_shoulder, right_shoulder)
             if _visible(idx["left_shoulder"], idx["right_shoulder"]) else None
@@ -230,11 +257,11 @@ def analyze_ski_pose(
 
         if topology.has_foot:
             left_ankle_angle = (
-                calculate_angle(left_knee, left_ankle, left_foot)
+                calculate_angle(lk_a, la_a, lf_a)
                 if _visible(idx["left_knee"], idx["left_ankle"], idx["left_foot"]) else None
             )
             right_ankle_angle = (
-                calculate_angle(right_knee, right_ankle, right_foot)
+                calculate_angle(rk_a, ra_a, rf_a)
                 if _visible(idx["right_knee"], idx["right_ankle"], idx["right_foot"]) else None
             )
         else:
