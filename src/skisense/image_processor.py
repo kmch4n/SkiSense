@@ -2,7 +2,7 @@
 
 Analyzes a single ski image (still frame) and saves the annotated result.
 Shares YOLO detection and drawing helpers with ``main.py`` and delegates
-pose estimation to the YOLO11-Pose backend.
+pose estimation to the SAM 3D Body backend.
 """
 import os
 import shutil
@@ -22,7 +22,7 @@ from .main import (
     resolve_device,
     run_yolo_detection,
 )
-from .pose_topology import COCO_17
+from .pose_topology import MHR_BODY
 
 
 def _pick_largest_bbox(rects):
@@ -59,7 +59,7 @@ def process_image(image_file: str = None):
         log_message("  - YOLO: MPS GPU (half=False)")
     else:
         log_message("  - YOLO: CPU")
-    log_message("  - Pose: YOLO11-Pose")
+    log_message("  - Pose: SAM 3D Body (MHR-21)")
     log_message("=" * 40)
 
     image_path = os.path.join(INPUT_DIR, image_file)
@@ -125,7 +125,7 @@ def process_image(image_file: str = None):
                 landmarks_entry["landmarks"],
                 landmarks_entry["bbox"],
                 zoom_info,
-                topology=landmarks_entry.get("topology", COCO_17),
+                topology=landmarks_entry.get("topology", MHR_BODY),
             )
             draw_info_panel(output_frame, analysis)
             log_message(f"姿勢スコア: {analysis['score']}/100")

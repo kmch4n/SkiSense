@@ -1,0 +1,44 @@
+# SAM 3D Body runtime dependencies (Python 3.11, CUDA 12.x).
+#
+# PyTorch must be installed separately first, matching your CUDA build:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#
+# detectron2 and MoGe are intentionally NOT installed: Sam3dBackend
+# initialises SAM 3D Body with detector_name="" and fov_name="", since
+# SkiSense feeds bboxes from YOLOv8x and a fixed-camera default FOV is
+# sufficient for ski footage. This removes the only mandatory C++/CUDA
+# toolchain step on Windows.
+pytorch-lightning
+pyrender
+opencv-python
+yacs
+scikit-image
+einops
+timm
+dill
+pandas
+rich
+hydra-core
+hydra-submitit-launcher
+hydra-colorlog
+pyrootutils
+webdataset
+chump
+networkx==3.2.1
+roma
+joblib
+seaborn
+wandb
+appdirs
+ffmpeg
+cython
+jsonlines
+pytest
+xtcocotools
+loguru
+optree
+fvcore
+black
+pycocotools
+tensorboard
+huggingface_hub>=1.0.0
