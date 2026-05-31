@@ -32,7 +32,7 @@ Meta SAM 3D Body への移行により、深い内傾姿勢、内脚の遮蔽、
 ## 主な機能
 
 - **人物検出** — YOLOv8x によるスキーヤー検出
-- **骨格推定** — Meta SAM 3D Body による MHR-21 キーポイント（3D + 2D 投影）と人体メッシュ推定
+- **骨格推定** — 既定は Meta SAM 3D Body による MHR-21 キーポイント（3D + 2D 投影）と人体メッシュ推定。`.env` で軽量な YOLO11-Pose（2D COCO-17）にも切替可能
 - **関節角度評価** — 膝・股関節・足首の屈曲角を 3D で算出し、肩の水平傾きを 2D 画面平面で評価
 - **総合スコア** — 算出可能な項目を 0〜100 点で評価
 - **複数人トラッキング** — Deep SORT によるフレーム間の ID 一貫性
@@ -43,13 +43,13 @@ Meta SAM 3D Body への移行により、深い内傾姿勢、内脚の遮蔽、
 
 ## 実行モード
 
-通常モードでは、YOLOv8x による人物検出、Deep SORT による追跡、SAM 3D Body による ROI 単位の 3D 骨格推定を順に実行する。追跡の安定性を優先する標準経路である。
+通常モードでは、YOLOv8x による人物検出、Deep SORT による追跡、選択された backend による ROI 単位の骨格推定を順に実行する。追跡の安定性を優先する標準経路である。
 
 ```bash
 python run.py video.mp4
 ```
 
-高速モードでは、`--fast` を付ける。YOLOv8x と Deep SORT を省略し、SAM 3D Body 内蔵検出器に人物検出も任せて 1 枚あたりの推論を 1 回に集約する。既定では事前に YOLOv8x + Deep SORT で主対象を選ぶため、混雑した映像でもズーム対象を固定しやすい。
+高速モードでは、`--fast` を付ける。YOLOv8x と Deep SORT を省略し、フレーム全体を 1 つの bbox として backend に渡して 1 枚あたりの推論を 1 回に集約する。既定では事前に YOLOv8x + Deep SORT で主対象を選ぶため、混雑した映像でもズーム対象を固定しやすい。
 
 ```bash
 python run.py --fast video.mp4
@@ -88,22 +88,28 @@ SKISENSE_TARGET_SELECTION_MODE=longest
 | 技術 | 役割 | 採用理由 |
 |------|------|---------|
 | [YOLOv8x](https://github.com/ultralytics/ultralytics) | 人物検出 | 高精度で複数人シーンでも安定。Ultralytics が公開する学習済みモデルを使用 |
-| [SAM 3D Body](https://github.com/facebookresearch/sam-3d-body) | 骨格・人体メッシュ推定 | Meta の単一画像 3D 人体メッシュ復元モデル（2025-11-19 公開）。MHR パラメトリックモデルにより視点不変の関節角度を提供 |
+| [SAM 3D Body](https://github.com/facebookresearch/sam-3d-body) | 骨格・人体メッシュ推定（既定） | Meta の単一画像 3D 人体メッシュ復元モデル（2025-11-19 公開）。MHR パラメトリックモデルにより視点不変の関節角度を提供 |
+| [YOLO11-Pose](https://docs.ultralytics.com/tasks/pose/) | 骨格推定（選択可能な軽量 backend） | 2D COCO-17 キーポイント。CPU でも動き高速。CUDA 非搭載機や素早い確認向け |
 | [Deep SORT](https://github.com/nwojke/deep_sort) | トラッキング | フレーム間で検出された人物に一貫した ID を付与 |
 | [OpenCV](https://opencv.org/) | 動画入出力・描画 | 業界標準の CV ライブラリ |
-| [PyTorch](https://pytorch.org/) | DL バックエンド | CUDA / CPU の統一 API（SAM 3D Body は CUDA 必須） |
+| [PyTorch](https://pytorch.org/) | DL バックエンド | CUDA / MPS / CPU の統一 API（SAM 3D Body は CUDA 必須） |
 | python-dotenv | 設定管理 | 設定値をコードから分離し、環境別の切替を容易にする |
 
-### SAM 3D Body
+### 姿勢推定バックエンドの選択
 
-SkiSense は Meta の SAM 3D Body を唯一の姿勢推定エンジンとして使用する。重みは HuggingFace にゲート公開されているため、`facebook/sam-3d-body-dinov3` へのアクセス申請と `hf auth login` による認証が初回セットアップで必要になる。詳細は [`notes/sam3d_setup.md`](notes/sam3d_setup.md) を参照。
+SkiSense は姿勢推定エンジンを `.env` の `SKISENSE_POSE_BACKEND` で切り替えられる。
 
 ```bash
-SKISENSE_SAM3D_HF_REPO=facebook/sam-3d-body-dinov3
-SKISENSE_SAM3D_USE_HAND_REFINE=false
+SKISENSE_POSE_BACKEND=sam3d    # 既定: SAM 3D Body（3D・高精度・CUDA 必須）
+SKISENSE_POSE_BACKEND=yolo11   # YOLO11-Pose（2D・軽量・CPU/MPS/CUDA 可）
 ```
 
-MHR トポロジは足先ランドマーク（big-toe / small-toe / heel）を含むため、足首角度（knee→ankle→toe の 3 点角）も総合スコアに組み入れている。膝・股関節・足首の角度は 3D カメラ座標で算出し、視点による投影歪みの影響を受けない。肩の水平傾きは「映像上の傾き」を素直に表す指標であるため、敢えて 2D 画面平面で計算している。
+各モデルの特性・設定・使い分けの詳細は [`docs/pose_backends.md`](docs/pose_backends.md) を参照。
+
+- **SAM 3D Body（既定）**: MHR トポロジが足先ランドマーク（big-toe / small-toe / heel）を含むため、足首角度（knee→ankle→toe の 3 点角）も総合スコアに組み入れる。膝・股関節・足首は 3D カメラ座標で算出し視点歪みを受けない。重みは HuggingFace ゲート公開で、`facebook/sam-3d-body-dinov3` へのアクセス申請と `hf auth login` が初回に必要（[`notes/sam3d_setup.md`](notes/sam3d_setup.md)）。
+- **YOLO11-Pose**: COCO-17 を 2D で推定。`yolo11x-pose.pt` が初回に自動ダウンロードされる。足先ランドマークがないため足首角度は `N/A`。
+
+肩の水平傾きは「映像上の傾き」を素直に表す指標であるため、どちらの backend でも 2D 画面平面で計算している。
 
 ---
 
@@ -114,14 +120,14 @@ MHR トポロジは足先ランドマーク（big-toe / small-toe / heel）を�
 フレーム単位で以下の 3 ステップを順に実行する。
 
 1. **検出・トラッキング** — YOLOv8 で人物を検出し、Deep SORT により持続的な ID を割り当てる
-2. **骨格推定** — 検出領域（ROI）の bbox を SAM 3D Body に渡し、MHR-21 キーポイント（3D カメラ座標 + 2D 投影）と人体メッシュを得たうえで `pose_analyzer` にて 3D 関節角度を評価する
+2. **骨格推定** — 検出領域（ROI）の bbox を選択された backend に渡す。SAM 3D Body なら MHR-21 キーポイント（3D + 2D 投影）と人体メッシュ、YOLO11-Pose なら COCO-17 の 2D キーポイントを得たうえで `pose_analyzer` にて関節角度を評価する
 3. **描画** — ZoomTracker によるズーム変換を適用し、骨格線と bbox を描画、最後に情報パネル（スコア・角度）を重ねる
 
 ### モジュール構成
 
 - **`config.py`** — `.env` から全設定を読み込み、型変換とバリデーションを行う
 - **`pose_topology.py`** — MHR-21（現行ランタイム）と COCO-17（参考）の 2 トポロジを定義する。`is_3d` フラグで pose_analyzer が 3D / 2D を切り替える
-- **`backends/`** — 姿勢推定 backend。現在は SAM 3D Body 実装を内包し、将来の高精度 backend 追加に備える
+- **`backends/`** — 姿勢推定 backend。SAM 3D Body と YOLO11-Pose を内包し、`SKISENSE_POSE_BACKEND` で切替。`PoseBackend` ABC により将来の backend 追加にも備える
 - **`pose_analyzer.py`** — 純粋関数による関節角度の計算と評価。副作用・I/O なし
 - **`zoom_tracker.py`** — EMA スムージングによる滑走者追尾。検出タイムアウト 30 フレーム
 - **`main.py`** — オーケストレーション。デバイス解決、backend 取得、フレームループ、動画 I/O
