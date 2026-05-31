@@ -668,6 +668,13 @@ def process_video(
     if USE_CUDA:
         log_message(f"GPU acceleration: enabled ({DEVICE})")
 
+    pose_backend = get_backend(
+        running_mode="video",
+        device=DEVICE,
+        use_gpu=USE_CUDA,
+        device_str=DEVICE_STR,
+    )
+
     log_message("=" * 40)
     log_message("Component configuration:")
 
@@ -680,25 +687,18 @@ def process_video(
 
     if fast_mode and target_mode == "longest" and ZOOM_ENABLED:
         log_message("  - Deep SORT: first-pass target selection")
-        log_message("  - Fast mode: SAM 3D Body internal detector, ROI step skipped")
+        log_message("  - Fast mode: full-frame pose, per-frame ROI step skipped")
     elif fast_mode:
         log_message("  - Deep SORT: disabled (fast mode)")
-        log_message("  - Fast mode: SAM 3D Body internal detector, ROI step skipped")
+        log_message("  - Fast mode: full-frame pose, per-frame ROI step skipped")
     elif DEVICE_STR == "cuda":
         log_message("  - Deep SORT: CUDA GPU")
     else:
         log_message("  - Deep SORT: CPU" + (" (MPS not supported)" if DEVICE_STR == "mps" else ""))
 
-    log_message("  - Pose: SAM 3D Body (MHR-21)")
+    log_message(f"  - Pose: {pose_backend.display_name}")
     log_message(f"  - Target selection: {target_mode}")
     log_message("=" * 40)
-
-    pose_backend = get_backend(
-        running_mode="video",
-        device=DEVICE,
-        use_gpu=USE_CUDA,
-        device_str=DEVICE_STR,
-    )
 
     video_path = os.path.join(INPUT_DIR, video_file)
     cap = cv2.VideoCapture(video_path)

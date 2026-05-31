@@ -51,6 +51,13 @@ def process_image(image_file: str = None):
     if use_gpu:
         log_message(f"GPU acceleration: enabled ({device})")
 
+    pose_backend = get_backend(
+        running_mode="image",
+        device=device,
+        use_gpu=use_gpu,
+        device_str=device_str,
+    )
+
     log_message("=" * 40)
     log_message("Component configuration:")
     if device_str == "cuda":
@@ -59,7 +66,7 @@ def process_image(image_file: str = None):
         log_message("  - YOLO: MPS GPU (half=False)")
     else:
         log_message("  - YOLO: CPU")
-    log_message("  - Pose: SAM 3D Body (MHR-21)")
+    log_message(f"  - Pose: {pose_backend.display_name}")
     log_message("=" * 40)
 
     image_path = os.path.join(INPUT_DIR, image_file)
@@ -82,12 +89,6 @@ def process_image(image_file: str = None):
     input_copy_path = os.path.join(output_dir, "image.jpg")
     shutil.copy2(image_path, input_copy_path)
 
-    pose_backend = get_backend(
-        running_mode="image",
-        device=device,
-        use_gpu=use_gpu,
-        device_str=device_str,
-    )
     yolo_model = load_yolo_model(device, use_gpu)
 
     if device_str == "cuda":
