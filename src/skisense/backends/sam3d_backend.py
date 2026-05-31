@@ -85,6 +85,7 @@ class Sam3dBackend(PoseBackend):
     """SAM 3D Body backend emitting MHR-21 landmarks with 3D coords."""
 
     topology = MHR_BODY
+    display_name = "SAM 3D Body (MHR-21)"
 
     def __init__(self, device=None, use_gpu: bool = False, device_str: str = "cpu"):
         self._device = device
