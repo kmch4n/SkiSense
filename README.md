@@ -20,7 +20,8 @@ the best-scoring frame, and per-joint readouts are written to disk.
 
 - **Person detection** — YOLOv8x
 - **Pose estimation** — selectable backend: SAM 3D Body (3D MHR-21,
-  default) or YOLO11-Pose (2D COCO-17). See [Pose backends](#pose-backends)
+  default) or YOLO11-Pose (2D COCO-17), switchable per run via
+  `--pose-backend`. See [Pose backends](#pose-backends)
 - **Joint-angle evaluation** — knee / hip / ankle in 3D, shoulder tilt in 2D
 - **Overall score** — 0–100 over the angles that can be measured
 - **Multi-person tracking** — Deep SORT keeps a stable ID across frames
@@ -41,9 +42,10 @@ pip install -r requirements-sam3d.txt
 Run:
 
 ```bash
-python run.py video.mp4            # process a video (input/video.mp4 by default)
-python run.py --fast video.mp4     # skip per-frame detect/track; one pass per frame
-python run.py skier.jpg --image    # process a single image
+python run.py video.mp4                     # process a video (input/video.mp4 by default)
+python run.py --fast video.mp4              # skip per-frame detect/track; one pass per frame
+python run.py --pose-backend yolo11 video.mp4   # legacy 2D pose engine (no CUDA needed)
+python run.py skier.jpg --image             # process a single image
 ```
 
 Output is written to `output/YYYYMMDD_HHMMSS/` (`video_pose.mp4`,
@@ -56,19 +58,35 @@ Output is written to `output/YYYYMMDD_HHMMSS/` (`video_pose.mp4`,
 
 ## Pose backends
 
-The pose engine is selected in `.env`:
+Two pose engines ship. `yolo11` is the pre-migration engine and remains
+fully supported, so falling back to the older 2D behaviour is a one-flag
+operation.
+
+Per run, on the command line:
+
+```bash
+python run.py --pose-backend sam3d     # 3D engine (default)
+python run.py --pose-backend yolo11    # legacy 2D engine
+```
+
+Or as a persistent default in `.env`:
 
 ```bash
 SKISENSE_POSE_BACKEND=sam3d    # default: SAM 3D Body (3D, CUDA required)
 SKISENSE_POSE_BACKEND=yolo11   # YOLO11-Pose (2D, runs on CPU/MPS/CUDA)
 ```
 
+The CLI flag wins over `.env`. The active engine is printed on the
+`- Pose:` line of the startup banner.
+
 - **SAM 3D Body** — 3D MHR keypoints + body mesh; view-invariant joint
   angles including the ankle. CUDA required; ~1–2 s/frame.
 - **YOLO11-Pose** — 2D COCO-17 keypoints; fast and CPU-capable, but the
   ankle angle is `N/A` (no foot landmark).
 
-Full comparison, settings, and trade-offs:
+Scores from the two engines are **not** comparable: the angles are
+measured differently, and `yolo11` averages 5 items where `sam3d`
+averages 7. Full comparison, settings, and trade-offs:
 [`docs/pose_backends.md`](docs/pose_backends.md).
 
 ## Architecture
