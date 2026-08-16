@@ -93,10 +93,14 @@ class Sam3dBackend(PoseBackend):
         self._device_str = device_str
         if device_str != "cuda":
             # SAM 3D Body's reference implementation moves batches to CUDA
-            # unconditionally; CPU/MPS paths are unsupported in v1.
+            # unconditionally; CPU/MPS paths are unsupported in v1. Point at
+            # the YOLO11-Pose fallback so non-CUDA machines have a way out.
             raise RuntimeError(
-                "SAM 3D Body backend requires CUDA. "
-                f"Current device_str={device_str!r}."
+                "SAM 3D Body backend requires CUDA "
+                f"(resolved device is {device_str!r}). "
+                "Use the CPU/MPS-capable backend instead: pass "
+                "`--pose-backend yolo11` on the command line, or set "
+                "SKISENSE_POSE_BACKEND=yolo11 in .env."
             )
 
         _ensure_external_on_path()

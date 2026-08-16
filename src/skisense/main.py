@@ -605,10 +605,10 @@ def process_fast_frame(
     height: int,
     target_bbox: Optional[BBox] = None,
 ):
-    """Process one frame with full-frame SAM 3D Body inference only.
+    """Process one frame with full-frame pose inference only.
 
     This skips the separate YOLOv8 detector, Deep SORT, and ROI pose
-    calls. SAM 3D Body's bundled detector handles person localisation.
+    calls; the backend's own full-frame path handles person localisation.
     """
     pose_results = pose_backend.estimate_full_frame(frame)
     primary = select_primary_fast_pose(pose_results, target_bbox)
@@ -642,14 +642,17 @@ def process_video(
     high_precision: bool = False,
     fast_mode: bool = False,
     target_mode: Optional[str] = None,
+    pose_backend_name: Optional[str] = None,
 ):
     """Main processing function for video input.
 
     Args:
         video_file: Video filename in input/ directory. Defaults to "video.mp4".
         high_precision: If True, use frame interpolation for higher accuracy.
-        fast_mode: If True, use full-frame SAM 3D Body without Deep SORT.
+        fast_mode: If True, run full-frame pose estimation without Deep SORT.
         target_mode: "longest" locks zoom to the longest visible track.
+        pose_backend_name: "sam3d" or "yolo11". Overrides
+            ``SKISENSE_POSE_BACKEND`` when given.
     """
     if video_file is None:
         video_file = "video.mp4"
@@ -673,6 +676,7 @@ def process_video(
         device=DEVICE,
         use_gpu=USE_CUDA,
         device_str=DEVICE_STR,
+        backend=pose_backend_name,
     )
 
     log_message("=" * 40)
@@ -804,9 +808,15 @@ def process_video(
     if high_precision:
         log_message("高精度モード: フレーム補間を使用（将来実装予定）")
     if fast_mode and active_target_mode == "longest":
-        log_message("高速モード: SAM 3D Body 内蔵検出と事前選択した主対象bboxを使用")
+        log_message(
+            f"高速モード: {pose_backend.display_name} の全画面推論と"
+            "事前選択した主対象bboxを使用"
+        )
     elif fast_mode:
-        log_message("高速モード: YOLOv8検出と Deep SORT を省略し SAM 3D Body 単体で実行")
+        log_message(
+            "高速モード: YOLOv8検出と Deep SORT を省略し "
+            f"{pose_backend.display_name} 単体で実行"
+        )
     log_message("処理中...")
 
     pbar = tqdm(total=total_frames, desc="Processing", unit="frame")

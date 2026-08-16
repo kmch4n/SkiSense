@@ -6,9 +6,13 @@ Usage:
 
 Options:
     --high     Enable high precision mode (frame interpolation, video only)
-    --fast     Enable fast full-frame SAM 3D Body mode (video only)
+    --fast     Enable fast full-frame pose mode (video only)
     --target-mode {longest,largest}
                Select the zoom target strategy (video only)
+    --pose-backend {sam3d,yolo11}
+               Select the pose engine, overriding SKISENSE_POSE_BACKEND.
+               "sam3d" is the 3D default; "yolo11" is the legacy 2D engine
+               that also runs on CPU/MPS.
     --image    Process a single image instead of a video
 
 Examples:
@@ -16,15 +20,17 @@ Examples:
     python run.py --high                   # Video: high precision mode
     python run.py --fast                   # Video: fast mode
     python run.py --target-mode largest    # Video: legacy largest-person zoom
+    python run.py --pose-backend yolo11    # Video: legacy 2D pose engine
     python run.py my_ski_video.mp4         # Video: specific file
     python run.py skier.jpg --image        # Image: input/skier.jpg
 
 Configuration:
-    Edit src/skisense/config.py to change settings.
+    Edit .env (see .env.example) to change settings.
 """
 import argparse
 
 from src.skisense import process_image, process_video
+from src.skisense.backends import AVAILABLE_BACKENDS
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -42,13 +48,23 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--fast", action="store_true",
-        help="Use fast full-frame SAM 3D Body mode (video only)",
+        help="Use fast full-frame pose mode (video only)",
     )
     parser.add_argument(
         "--target-mode",
         choices=["longest", "largest"],
         default=None,
         help="Zoom target selection strategy (video only)",
+    )
+    parser.add_argument(
+        "--pose-backend",
+        choices=list(AVAILABLE_BACKENDS),
+        default=None,
+        help=(
+            "Pose engine to use, overriding SKISENSE_POSE_BACKEND. "
+            "'sam3d' is the 3D default (CUDA required); 'yolo11' is the "
+            "legacy 2D engine and runs on CPU/MPS/CUDA."
+        ),
     )
     parser.add_argument(
         "--image", action="store_true",
@@ -64,7 +80,10 @@ if __name__ == "__main__":
             parser.error("--image cannot be combined with --fast")
         if args.target_mode is not None:
             parser.error("--image cannot be combined with --target-mode")
-        process_image(image_file=args.input_file)
+        process_image(
+            image_file=args.input_file,
+            pose_backend_name=args.pose_backend,
+        )
     else:
         if args.high and args.fast:
             parser.error("--high cannot be combined with --fast")
@@ -73,4 +92,5 @@ if __name__ == "__main__":
             high_precision=args.high,
             fast_mode=args.fast,
             target_mode=args.target_mode,
+            pose_backend_name=args.pose_backend,
         )
