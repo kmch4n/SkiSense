@@ -2,12 +2,13 @@
 
 Analyzes a single ski image (still frame) and saves the annotated result.
 Shares YOLO detection and drawing helpers with ``main.py`` and delegates
-pose estimation to the SAM 3D Body backend.
+pose estimation to the selected pose backend.
 """
 import os
 import shutil
 import time
 from datetime import datetime
+from typing import Optional
 
 import cv2
 
@@ -32,11 +33,16 @@ def _pick_largest_bbox(rects):
     return max(rects, key=lambda r: r[2] * r[3])
 
 
-def process_image(image_file: str = None):
+def process_image(
+    image_file: str = None,
+    pose_backend_name: Optional[str] = None,
+):
     """Analyze a single ski image and save the annotated output.
 
     Args:
         image_file: Image filename in input/ directory. Defaults to "image.jpg".
+        pose_backend_name: "sam3d" or "yolo11". Overrides
+            ``SKISENSE_POSE_BACKEND`` when given.
     """
     if image_file is None:
         image_file = "image.jpg"
@@ -56,6 +62,7 @@ def process_image(image_file: str = None):
         device=device,
         use_gpu=use_gpu,
         device_str=device_str,
+        backend=pose_backend_name,
     )
 
     log_message("=" * 40)
