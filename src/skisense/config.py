@@ -61,11 +61,23 @@ def _get_float(key: str, default: float, min_val: float = None, max_val: float =
     except ValueError:
         return default
 
-def _get_str(key: str, default: str, valid_options: list = None) -> str:
-    """Get string from environment with validation."""
+def _get_str(key: str, default: str, valid_options: list = None,
+             lower: bool = False) -> str:
+    """Get string from environment with validation.
+
+    Args:
+        key: Environment variable name.
+        default: Value used when unset or invalid.
+        valid_options: Allowed values; anything else falls back to default.
+        lower: Case-fold and strip the value before validating. Use for
+            settings whose options are all lowercase identifiers, so
+            ``YOLO11`` is accepted rather than silently ignored.
+    """
     value = os.getenv(key)
     if value is None:
         return default
+    if lower:
+        value = value.strip().lower()
     if valid_options and value not in valid_options:
         return default
     return value
@@ -102,9 +114,15 @@ YOLO_MODEL = "yolov8x.pt"           # YOLOv8 model file (person detection)
 
 # Pose backend selection:
 #   - "sam3d":  SAM 3D Body (3D MHR-21, CUDA required, higher accuracy)
-#   - "yolo11": YOLO11-Pose (2D COCO-17, CPU/MPS/CUDA, faster, lighter)
+#   - "yolo11": YOLO11-Pose (2D COCO-17, CPU/MPS/CUDA, faster, lighter).
+#               The pre-migration engine, kept as a supported fallback.
+# Single source of truth for the accepted names; re-exported as
+# ``backends.AVAILABLE_BACKENDS`` and used by ``run.py --pose-backend``,
+# which overrides this value for a single run.
+AVAILABLE_POSE_BACKENDS = ("sam3d", "yolo11")
 POSE_BACKEND = _get_str('SKISENSE_POSE_BACKEND', 'sam3d',
-                        valid_options=['sam3d', 'yolo11'])
+                        valid_options=list(AVAILABLE_POSE_BACKENDS),
+                        lower=True)
 
 # --- SAM 3D Body settings (used when POSE_BACKEND == "sam3d") ---------------
 # Weights are gated on HuggingFace; request access on

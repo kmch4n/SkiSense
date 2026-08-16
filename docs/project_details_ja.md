@@ -66,6 +66,13 @@ python run.py --fast video.mp4
 python run.py --fast --target-mode largest video.mp4
 ```
 
+姿勢推定エンジンそのものを SAM 3D Body 移行前の 2D パイプラインへ戻す場合は `--pose-backend yolo11` を指定する。CUDA 非搭載機ではこちらが唯一の実行経路となる。
+
+```bash
+python run.py --pose-backend yolo11 video.mp4
+python run.py --pose-backend yolo11 skier.jpg --image
+```
+
 ---
 
 ## ズーム仕様
@@ -100,12 +107,16 @@ SKISENSE_TARGET_SELECTION_MODE=longest
 
 ### 姿勢推定バックエンドの選択
 
-SkiSense は姿勢推定エンジンを `.env` の `SKISENSE_POSE_BACKEND` で切り替えられる。
+SkiSense は姿勢推定エンジンを実行ごとに `--pose-backend` で、恒久的には `.env` の `SKISENSE_POSE_BACKEND` で切り替えられる。優先順位は CLI フラグ → `.env` → 既定値 `sam3d` である。
 
 ```bash
+python run.py --pose-backend yolo11 video.mp4   # この実行のみ 2D エンジン
+
 SKISENSE_POSE_BACKEND=sam3d    # 既定: SAM 3D Body（3D・高精度・CUDA 必須）
 SKISENSE_POSE_BACKEND=yolo11   # YOLO11-Pose（2D・軽量・CPU/MPS/CUDA 可）
 ```
+
+移行にあたり YOLO11-Pose を削除せず残したのは、CUDA 非搭載機での実行経路を確保するためと、移行前の出力を再現できるようにするためである。両者はスコアの母数が異なる（`sam3d` は 7 項目、`yolo11` は足首を測れないため 5 項目）ので、スコアをまたいで比較しないこと。
 
 各モデルの特性・設定・使い分けの詳細は [`pose_backends_ja.md`](pose_backends_ja.md) を参照。
 
@@ -129,8 +140,8 @@ SKISENSE_POSE_BACKEND=yolo11   # YOLO11-Pose（2D・軽量・CPU/MPS/CUDA 可）
 ### モジュール構成
 
 - **`config.py`** — `.env` から全設定を読み込み、型変換とバリデーションを行う
-- **`pose_topology.py`** — MHR-21（現行ランタイム）と COCO-17（参考）の 2 トポロジを定義する。`is_3d` フラグで pose_analyzer が 3D / 2D を切り替える
-- **`backends/`** — 姿勢推定 backend。SAM 3D Body と YOLO11-Pose を内包し、`SKISENSE_POSE_BACKEND` で切替。`PoseBackend` ABC により将来の backend 追加にも備える
+- **`pose_topology.py`** — MHR-21（既定ランタイム）と COCO-17（YOLO11-Pose ランタイム）の 2 トポロジを定義する。`is_3d` フラグで pose_analyzer が 3D / 2D を切り替える
+- **`backends/`** — 姿勢推定 backend。SAM 3D Body と YOLO11-Pose を内包し、`get_backend(backend=...)` が CLI フラグ → `SKISENSE_POSE_BACKEND` → 既定値の順で解決する。`PoseBackend` ABC により将来の backend 追加にも備える
 - **`pose_analyzer.py`** — 純粋関数による関節角度の計算と評価。副作用・I/O なし
 - **`zoom_tracker.py`** — EMA スムージングによる滑走者追尾。検出タイムアウト 30 フレーム
 - **`main.py`** — オーケストレーション。デバイス解決、backend 取得、フレームループ、動画 I/O
@@ -141,7 +152,8 @@ SKISENSE_POSE_BACKEND=yolo11   # YOLO11-Pose（2D・軽量・CPU/MPS/CUDA 可）
 `auto` モード時の優先順位は **MPS > CUDA > CPU**。ただしコンポーネントごとに制約が異なる。
 
 - **YOLOv8x** は CUDA / MPS / CPU に対応、CUDA 時のみ `half=True`、MPS では `half=False`
-- **SAM 3D Body** は CUDA 必須。`device_str` が `cuda` 以外のとき backend は起動時に例外を投げる
+- **SAM 3D Body** は CUDA 必須。`device_str` が `cuda` 以外のとき backend は起動時に例外を投げ、`--pose-backend yolo11` への切り替えを案内する
+- **YOLO11-Pose** は CUDA / MPS / CPU いずれでも動作するため、CUDA 非搭載機の実行経路となる
 - **Deep SORT** は MPS 非対応のため、macOS でも CPU フォールバック
 
 ---

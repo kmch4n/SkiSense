@@ -1,13 +1,17 @@
 """Pose topology definitions.
 
-SkiSense uses SAM 3D Body as its pose estimator. SAM 3D Body emits MHR
-(Momentum Human Rig) keypoints; SkiSense consumes the first 63 entries
-covering body, feet, and wrists, providing the joints required for
-ski-posture scoring (shoulders, hips, knees, ankles, toes) plus the
-elbow→wrist arm segment used by the rendered overlay.
+Each pose backend declares the landmark layout it emits, and
+``analyze_ski_pose`` plus the drawing helpers follow that declaration
+instead of hard-coding indices. Two layouts ship today:
 
-The legacy COCO-17 layout remains exported because pose_analyzer's
-visibility-threshold helper and historical tests refer to it.
+- ``MHR_BODY`` — SAM 3D Body's MHR (Momentum Human Rig) keypoints.
+  SkiSense consumes the first 63 entries covering body, feet, and wrists,
+  providing every joint required for ski-posture scoring (shoulders,
+  hips, knees, ankles, toes) plus the elbow→wrist arm segment used by the
+  rendered overlay.
+- ``COCO_17`` — YOLO11-Pose's 2D layout. This was the pre-migration
+  runtime topology and remains fully supported as the CPU/MPS-capable
+  fallback; it has no foot landmark, so ankle angle is unavailable.
 """
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Tuple
@@ -28,7 +32,7 @@ class PoseTopology:
 
 
 # ---------------------------------------------------------------------------
-# COCO-17 (legacy reference; YOLO11-Pose was the previous backend)
+# COCO-17 (emitted by the YOLO11-Pose backend)
 # ---------------------------------------------------------------------------
 #   0:nose   1:left_eye        2:right_eye
 #   3:left_ear  4:right_ear    5:left_shoulder  6:right_shoulder
@@ -63,7 +67,7 @@ COCO_17 = PoseTopology(
 
 
 # ---------------------------------------------------------------------------
-# MHR_BODY (current runtime topology emitted by SAM 3D Body)
+# MHR_BODY (default runtime topology, emitted by SAM 3D Body)
 # ---------------------------------------------------------------------------
 # SAM 3D Body returns the first 70 MHR keypoints. SkiSense keeps the first
 # 63 because wrists are at indices 41/62; entries 21–40 and 42–61 are
