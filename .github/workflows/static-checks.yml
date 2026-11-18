@@ -1,0 +1,27 @@
+name: Documentation and syntax checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    name: Markdown links and Python syntax (stdlib only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile source and tests (no imports)
+        run: python -m compileall -q run.py compare.py src tests
+      - name: Check relative Markdown links
+        run: python -m unittest discover -s tests -p 'test_docs_links.py' -v
