@@ -2,7 +2,8 @@
 
 Exposes ``get_backend(...)`` which selects a concrete ``PoseBackend``:
 
-- ``"sam3d"`` (default): SAM 3D Body, 3D MHR-21, CUDA required.
+- ``"yolo26"`` (default): YOLO26-Pose, 2D COCO-17, CPU/MPS/CUDA capable.
+- ``"sam3d"``: SAM 3D Body, 3D MHR-21, CUDA required.
 - ``"yolo11"``: YOLO11-Pose, 2D COCO-17, CPU/MPS/CUDA capable. This is
   the pre-migration engine, kept as a supported fallback.
 
@@ -57,7 +58,7 @@ def get_backend(
 ) -> PoseBackend:
     """Build and return the requested pose backend.
 
-    Both backends are stateless across image and video flows and share the
+    All backends are stateless across image and video flows and share the
     same ``(entry, analysis)`` contract plus ``estimate_full_frame`` for
     fast mode, so callers do not need to know which one is active.
 
@@ -74,8 +75,16 @@ def get_backend(
     """
     name = resolve_backend_name(backend)
 
-    if name == "yolo11":
+    if name in ("yolo11", "yolo26"):
         from .yolo11_backend import Yolo11Backend
+        if name == "yolo26":
+            from ..config import YOLO26_POSE_MODEL
+            result = Yolo11Backend(
+                device=device, use_gpu=use_gpu, device_str=device_str,
+                model_filename=YOLO26_POSE_MODEL,
+            )
+            result.display_name = "YOLO26-Pose (COCO-17)"
+            return result
         return Yolo11Backend(device=device, use_gpu=use_gpu, device_str=device_str)
 
     from .sam3d_backend import Sam3dBackend

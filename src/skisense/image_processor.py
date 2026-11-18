@@ -41,7 +41,7 @@ def process_image(
 
     Args:
         image_file: Image filename in input/ directory. Defaults to "image.jpg".
-        pose_backend_name: "sam3d" or "yolo11". Overrides
+        pose_backend_name: "yolo26", "sam3d", or "yolo11". Overrides
             ``SKISENSE_POSE_BACKEND`` when given.
     """
     if image_file is None:

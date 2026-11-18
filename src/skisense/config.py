@@ -113,14 +113,14 @@ ROI_PADDING_RATIO = _get_float('SKISENSE_ROI_PADDING', 0.3, min_val=0.0, max_val
 YOLO_MODEL = "yolov8x.pt"           # YOLOv8 model file (person detection)
 
 # Pose backend selection:
-#   - "sam3d":  SAM 3D Body (3D MHR-21, CUDA required, higher accuracy)
-#   - "yolo11": YOLO11-Pose (2D COCO-17, CPU/MPS/CUDA, faster, lighter).
-#               The pre-migration engine, kept as a supported fallback.
+#   - "yolo26": YOLO26-Pose (2D COCO-17, CPU/MPS/CUDA).
+#   - "sam3d":  SAM 3D Body (3D MHR-21, CUDA required).
+#   - "yolo11": YOLO11-Pose (2D COCO-17, legacy output reproduction).
 # Single source of truth for the accepted names; re-exported as
 # ``backends.AVAILABLE_BACKENDS`` and used by ``run.py --pose-backend``,
 # which overrides this value for a single run.
-AVAILABLE_POSE_BACKENDS = ("sam3d", "yolo11")
-POSE_BACKEND = _get_str('SKISENSE_POSE_BACKEND', 'sam3d',
+AVAILABLE_POSE_BACKENDS = ("yolo26", "sam3d", "yolo11")
+POSE_BACKEND = _get_str('SKISENSE_POSE_BACKEND', 'yolo26',
                         valid_options=list(AVAILABLE_POSE_BACKENDS),
                         lower=True)
 
@@ -136,10 +136,11 @@ SAM3D_HF_REPO = _get_str(
 # joints, so the cheaper body-only inference path is the default.
 SAM3D_USE_HAND_REFINE = _get_bool('SKISENSE_SAM3D_USE_HAND_REFINE', False)
 
-# --- YOLO11-Pose settings (used when POSE_BACKEND == "yolo11") --------------
+# --- Ultralytics YOLO-Pose settings (yolo26 and yolo11) --------------------
 # Ultralytics auto-downloads the weights on first run; SkiSense caches
 # them under models/.
 YOLO_POSE_MODEL = _get_str('SKISENSE_YOLO_POSE_MODEL', 'yolo11x-pose.pt')
+YOLO26_POSE_MODEL = _get_str('SKISENSE_YOLO26_POSE_MODEL', 'yolo26x-pose.pt')
 YOLO_POSE_CONFIDENCE = _get_float('SKISENSE_YOLO_POSE_CONFIDENCE', 0.25,
                                    min_val=0.0, max_val=1.0)
 # Apply CLAHE to the ROI before pose estimation (opt-in; can amplify snow noise).

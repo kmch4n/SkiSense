@@ -9,10 +9,10 @@ Options:
     --fast     Enable fast full-frame pose mode (video only)
     --target-mode {longest,largest}
                Select the zoom target strategy (video only)
-    --pose-backend {sam3d,yolo11}
+    --pose-backend {yolo26,sam3d,yolo11}
                Select the pose engine, overriding SKISENSE_POSE_BACKEND.
-               "sam3d" is the 3D default; "yolo11" is the legacy 2D engine
-               that also runs on CPU/MPS.
+               "yolo26" is the 2D default; "sam3d" adds 3D and ankle angles;
+               "yolo11" reproduces the older 2D engine.
     --image    Process a single image instead of a video
 
 Examples:
@@ -20,7 +20,7 @@ Examples:
     python run.py --high                   # Video: high precision mode
     python run.py --fast                   # Video: fast mode
     python run.py --target-mode largest    # Video: legacy largest-person zoom
-    python run.py --pose-backend yolo11    # Video: legacy 2D pose engine
+    python run.py --pose-backend sam3d     # Video: 3D pose engine
     python run.py my_ski_video.mp4         # Video: specific file
     python run.py skier.jpg --image        # Image: input/skier.jpg
 
@@ -62,8 +62,8 @@ if __name__ == "__main__":
         default=None,
         help=(
             "Pose engine to use, overriding SKISENSE_POSE_BACKEND. "
-            "'sam3d' is the 3D default (CUDA required); 'yolo11' is the "
-            "legacy 2D engine and runs on CPU/MPS/CUDA."
+            "'yolo26' is the 2D default; 'sam3d' needs CUDA and gated weights; "
+            "'yolo11' reproduces the older 2D engine."
         ),
     )
     parser.add_argument(
