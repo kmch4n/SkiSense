@@ -18,7 +18,7 @@ SkiSense は映像中のスキーヤーを検出し、姿勢を推定して、�
 ## 主な機能
 
 - **人物検出** — YOLOv8x
-- **骨格推定** — 既定は YOLO26-Pose（2D COCO-17）。`--pose-backend` で YOLO11-Pose または SAM 3D Body（3D MHR-21）に切替可能。[姿勢推定バックエンド](#姿勢推定バックエンド)を参照
+- **骨格推定** — 既定は YOLO26-Pose（2D COCO-17）。`--pose-backend` で YOLO11-Pose または SAM 3D Body（MHR由来の推定3D座標）に切替可能。[姿勢推定バックエンド](#姿勢推定バックエンド)を参照
 - **関節角度評価** — YOLO は膝・股関節を 2D、SAM 3D Body は膝・股関節・足首を 3D で評価。肩の水平傾きは 2D で評価
 - **総合スコア** — 算出可能な項目を 0〜100 点で評価
 - **複数人トラッキング** — Deep SORT によるフレーム間の ID 一貫性
@@ -33,15 +33,17 @@ SkiSense は映像中のスキーヤーを検出し、姿勢を推定して、�
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
-# SAM 3D Body backend を使う場合のみ（docs/pose_backends.md 参照）:
+# SAM 3D Body backend を使う場合のみ:
 pip install -r requirements-sam3d.txt
+# 加えて Meta のソース配置と Hugging Face 認証が必要。
+# 詳細: docs/sam3d_setup.md
 ```
 
 実行:
 
 ```bash
 python run.py video.mp4                          # 動画を処理（既定 input/video.mp4）
-python run.py --fast video.mp4                   # フレーム単位の検出/追跡を省略し 1 回の推論に集約
+python run.py --fast video.mp4                   # 全画面姿勢推定（longest＋ズーム有効時は事前追跡あり）
 python run.py --pose-backend sam3d video.mp4     # 3D エンジン（CUDA 必須）
 python run.py --pose-backend yolo11 video.mp4    # 従来の 2D エンジン
 python run.py skier.jpg --image                  # 静止画を処理
@@ -85,7 +87,7 @@ SKISENSE_POSE_BACKEND=yolo26   # 必要に応じて yolo11 または sam3d に�
 CLI フラグが `.env` より優先される。有効なエンジンは起動時バナーの `- Pose:` 行に
 表示される。
 
-- **SAM 3D Body** — 3D MHR キーポイント + 人体メッシュ。視点不変の関節角度（足首含む）。CUDA 必須、~1–2 秒/フレーム。
+- **SAM 3D Body** — 推定3D MHR関節座標と人体メッシュを生成し、足首角度も算出する。視点・遮蔽に伴う誤差が残る。CUDAとゲート公開重みが必要で、処理時間は機材・モデルに依存する。
 - **YOLO26-Pose** — 既定の 2D COCO-17 エンジン。公開重みを使用し、CPU に対応する。
 - **YOLO11-Pose** — 2D COCO-17。高速で CPU でも動くが、足先ランドマークがないため足首角度は `N/A`。
 
@@ -96,13 +98,17 @@ YOLO26 も足先ランドマークがないため、足首角度は `N/A` とな
 
 ## アーキテクチャ
 
-フレーム単位で 3 ステップを実行する。
+通常動画モードは以下の3段階で構成する。高速モードは各フレームの検出・追跡を省略する場合があり、`longest`＋ズーム有効時は別途事前走査する。
 
-1. **検出・トラッキング** — YOLOv8x で検出、Deep SORT で持続 ID を付与
+1. **検出・トラッキング** — YOLOv8xで人物を検出し、必要に応じてDeep SORTで追跡対象を選ぶ
 2. **骨格推定** — 選択された backend がキーポイントを返し（SAM 3D Body は 3D + 2D、YOLO11/YOLO26 は 2D）、`pose_analyzer` が関節角度を評価
-3. **描画** — `ZoomTracker` のズームを適用し、骨格・bbox を `transform_point_to_zoom()` 経由で描画、情報パネルを重畳
+3. **描画** — ズーム有効時は`ZoomTracker`がbbox面積に基づいて即時にcropを変更する（設定上のスムージングは現行では未使用）。骨格・bboxを`transform_point_to_zoom()`経由で描画し、情報パネルを重畳する。ズーム無効時の既知の不具合は[Issue #15](https://github.com/kmch4n/SkiSense/issues/15)参照。
 
 主要モジュール: `config.py` / `pose_topology.py` / `backends/` / `pose_analyzer.py` / `zoom_tracker.py` / `main.py` / `image_processor.py`。
+
+## 仕様書と変更管理
+
+[仕様書インデックス](docs/spec/README.md) に、現行動作、スコアの計算契約、[実装・検証対応表](docs/spec/verification_matrix_ja.md)、仕様駆動開発の変更手順をまとめている。現在の仕様書は提案段階であり、実装と実映像での検証を区別している。SAM 3D Body の導入には[セットアップガイド](docs/sam3d_setup.md)を参照。
 
 ## License
 
