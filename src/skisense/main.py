@@ -651,7 +651,7 @@ def process_video(
         high_precision: If True, use frame interpolation for higher accuracy.
         fast_mode: If True, run full-frame pose estimation without Deep SORT.
         target_mode: "longest" locks zoom to the longest visible track.
-        pose_backend_name: "sam3d" or "yolo11". Overrides
+        pose_backend_name: "yolo26", "sam3d", or "yolo11". Overrides
             ``SKISENSE_POSE_BACKEND`` when given.
     """
     if video_file is None:
