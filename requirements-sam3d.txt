@@ -3,11 +3,12 @@
 # PyTorch must be installed separately first, matching your CUDA build:
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 #
-# detectron2 and MoGe are intentionally NOT installed: Sam3dBackend
-# initialises SAM 3D Body with detector_name="" and fov_name="", since
-# SkiSense feeds bboxes from YOLOv8x and a fixed-camera default FOV is
-# sufficient for ski footage. This removes the only mandatory C++/CUDA
-# toolchain step on Windows.
+# detectron2 and MoGe are intentionally excluded here: the current
+# Sam3dBackend instantiates SAM3DBodyEstimator with human_detector=None,
+# human_segmentor=None and fov_estimator=None. Standard processing supplies
+# YOLOv8x person bboxes; --fast currently has a whole-image fallback issue.
+# See docs/sam3d_setup.md and Issue #16 for limitations; whether omitted
+# upstream detector dependencies are dispensable requires installation tests.
 pytorch-lightning
 pyrender
 opencv-python

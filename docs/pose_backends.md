@@ -26,18 +26,14 @@ Resolution order is `--pose-backend` → `SKISENSE_POSE_BACKEND` → `yolo26`.
 The selected engine is echoed on the `- Pose:` line of the startup banner,
 so you can confirm which one is active before a long run.
 
-The person detection (YOLOv8x), tracking (Deep SORT), zoom, and scoring
-pipeline are shared; only the pose estimation step swaps out. Each backend
-declares its own topology (`pose_topology.py`), and `analyze_ski_pose`
-plus the drawing helpers follow it automatically. `--fast`, `--high`, and
-`--target-mode` work with each regular-run engine.
+In **normal video mode**, YOLOv8x detection and Deep SORT-based target selection are available, while the selected backend estimates each person's pose. In `--fast` mode, YOLO pose backends can localize multiple persons themselves; SAM3D currently cannot because its embedded detector is disabled ([#16](https://github.com/kmch4n/SkiSense/issues/16)). The `--high` flag is accepted but has no implemented high-precision effect ([#4](https://github.com/kmch4n/SkiSense/issues/4)). `--target-mode` is currently coupled to zoom state ([#15](https://github.com/kmch4n/SkiSense/issues/15)). Each backend declares its topology in `pose_topology.py`.
 
 ## Comparison
 
 | Aspect | YOLO26-Pose | YOLO11-Pose | SAM 3D Body |
 |---|---|---|---|
 | Backend name | `yolo26` (default) | `yolo11` | `sam3d` |
-| Topology | COCO-17 | COCO-17 | MHR-21 (body + feet + wrists) |
+| Topology | COCO-17 | COCO-17 | MHR-derived 63-entry subset (body, feet, wrists, unused finger slots) |
 | Dimensions | 2D image space | 2D image space | 3D (camera space) + 2D projection |
 | Joint angles | Knee / hip in 2D | Knee / hip in 2D | Knee / hip / ankle in 3D |
 | Ankle angle | N/A | N/A | Yes |
@@ -62,23 +58,27 @@ and missing ankle angle. `ultralytics>=8.4.215` is required.
 ## SAM 3D Body (`sam3d`)
 
 Meta's single-image 3D human mesh recovery model, released 2025-11-19. It
-uses the MHR (Momentum Human Rig) parametric model, yielding true,
-view-invariant joint angles. SkiSense consumes the first 63 of the MHR70
-keypoints (body, feet, wrists).
+uses the MHR (Momentum Human Rig) parametric model to **estimate** camera-space
+3D joint angles, not to measure ground-truth biomechanics. The SkiSense
+`MHR_BODY` topology stores the first **63** of MHR70 keypoints (including
+unused finger slots) and scores selected body/foot joints. The UI's
+"MHR-21" nickname should not be mistaken for a 21-landmark array.
 
-- **Strengths**: Knee/hip/ankle angles stay undistorted under oblique
-  viewpoints; robust to inside-leg occlusion. Evaluates ankle flex
-  (knee→ankle→toe) and also produces a body mesh.
-- **Weaknesses**: CUDA required. A few seconds per frame, so video is an
-  offline batch. Gated weights require a one-time HuggingFace access
-  request.
+- **Strengths**: Estimates knee/hip/ankle angles from a reconstructed 3D
+  body rather than 2D projected points, including the knee→ankle→toe angle;
+  also returns a body mesh. Oblique viewpoints and occlusion can still
+  introduce reconstruction errors, so per-skiing-domain accuracy is unverified.
+- **Weaknesses**: CUDA required, gated weights require a one-time
+  Hugging Face access request, and runtime depends on the checkpoint,
+  hardware and video resolution. Benchmark throughput before planning
+  lengthy video processing.
 - **Settings**:
   - `SKISENSE_SAM3D_HF_REPO`: `facebook/sam-3d-body-dinov3` (default, 840M)
     or `facebook/sam-3d-body-vith` (631M, lighter / lower VRAM)
-  - `SKISENSE_SAM3D_USE_HAND_REFINE`: hand decoder. Off by default since
-    SkiSense does not score hands (roughly halves VRAM and latency).
-- **Setup**: see [`../notes/sam3d_setup.md`](../notes/sam3d_setup.md)
-  (detectron2 / MoGe are not needed).
+  - `SKISENSE_SAM3D_USE_HAND_REFINE`: hand refinement. Off by default
+    because SkiSense does not score hand joints. Actual VRAM/latency savings
+    depend on the model and host and must be benchmarked.
+- **Setup**: see [`sam3d_setup.md`](sam3d_setup.md). It explains the upstream source checkout, gated weights, and skipped detector configuration. Upstream's reference installation includes Detectron2; whether it is needed for this no-detector code path must be checked on the target platform.
 
 ## YOLO11-Pose (`yolo11`)
 
@@ -87,17 +87,18 @@ Ultralytics' 2D pose model, and the engine SkiSense used before the SAM
 deliberately — not deprecated — so results from the older pipeline stay
 reproducible and CUDA-less machines remain usable.
 
-- **Strengths**: Runs on CPU. A few ms per frame, suitable for quick
-  checks, near-real-time use, or machines without CUDA. Weights
-  auto-download.
+- **Strengths**: Runs on CPU and on supported accelerators; no gated
+  checkpoint is required. Weights auto-download. Actual per-frame latency
+  depends on checkpoint size, input resolution, hardware and pipeline mode;
+  benchmark on the target environment before assuming real-time performance.
 - **Weaknesses**: Being 2D, joint angles suffer projection distortion at
   oblique viewpoints. COCO-17 has no foot landmark, so the **ankle angle
   is N/A** (excluded from the score).
 - **Settings**:
   - `SKISENSE_YOLO_POSE_MODEL`: `yolo11x-pose.pt` (default); also n/s/m/l/x
-  - `SKISENSE_YOLO_POSE_CONFIDENCE`: keypoint confidence threshold (default 0.25)
+  - `SKISENSE_YOLO_POSE_CONFIDENCE`: YOLO-Pose **person/instance detection** confidence threshold passed to Ultralytics `conf=` (default 0.25; shared by YOLO11 and YOLO26). **Not** a per-keypoint threshold; joint visibility uses `keypoints.conf` and `SKISENSE_POSE_VISIBILITY_THRESHOLD` / `SKISENSE_POSE_VISIBILITY_THRESHOLD_LEGS`.
   - `SKISENSE_CLAHE_ENABLED`: apply CLAHE to the ROI (default false)
-  - `SKISENSE_FLIP_TTA_ENABLED`: horizontal-flip TTA (default false, 2x cost)
+  - `SKISENSE_FLIP_TTA_ENABLED`: horizontal-flip TTA (default false; adds a second pose inference pass in ROI mode, with platform-dependent total runtime)
 
 ## Choosing a backend
 
@@ -117,7 +118,7 @@ precision, so do not compare a `sam3d` score against a YOLO score:
   yields different degrees at oblique viewpoints.
 - The overall score is the mean over the joints that could be measured.
   YOLO cannot measure the two ankle angles, so its mean is taken over
-  5 items instead of 7.
+  at most 5 items instead of 7 (only for visible/usable joints).
 
 Fix the backend for a given comparison — for example when reviewing a
 season's clips as a set.
