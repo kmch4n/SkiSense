@@ -9,9 +9,8 @@ instead of hard-coding indices. Two layouts ship today:
   providing every joint required for ski-posture scoring (shoulders,
   hips, knees, ankles, toes) plus the elbow→wrist arm segment used by the
   rendered overlay.
-- ``COCO_17`` — YOLO11-Pose's 2D layout. This was the pre-migration
-  runtime topology and remains fully supported as the CPU/MPS-capable
-  fallback; it has no foot landmark, so ankle angle is unavailable.
+- ``COCO_17`` — YOLO26-Pose and YOLO11-Pose's 2D layout. It has no foot
+  landmark, so ankle angle is unavailable.
 """
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List, Tuple

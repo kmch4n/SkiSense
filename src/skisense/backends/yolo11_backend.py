@@ -1,6 +1,6 @@
-"""Ultralytics YOLO11-Pose backend.
+"""Ultralytics COCO-17 pose backend for YOLO11 and YOLO26 checkpoints.
 
-Drives Ultralytics' YOLO11-Pose model through the shared ``PoseBackend``
+Drives an Ultralytics YOLO pose model through the shared ``PoseBackend``
 interface. Emits COCO-17 landmarks (no foot keypoints), so
 ``analyze_ski_pose`` automatically skips ankle-angle scoring when this
 backend is selected.
@@ -55,15 +55,17 @@ def _resolve_pose_device(device, use_gpu: bool, device_str: str):
 
 
 class Yolo11Backend(PoseBackend):
-    """YOLO11-Pose backend emitting COCO-17 landmarks."""
+    """Ultralytics pose backend emitting COCO-17 landmarks."""
 
     topology = COCO_17
     display_name = "YOLO11-Pose (COCO-17)"
 
-    def __init__(self, device=None, use_gpu: bool = False, device_str: str = "cpu"):
+    def __init__(self, device=None, use_gpu: bool = False, device_str: str = "cpu",
+                 model_filename: Optional[str] = None):
         self._device = device
         self._use_gpu = use_gpu
         self._device_str = device_str
+        self.model_filename = model_filename or YOLO_POSE_MODEL
         self._yolo_device, self._yolo_half = _resolve_pose_device(device, use_gpu, device_str)
         self._flip_swap_table = build_flip_swap_table(COCO_17)
         self._model = self._build_model()
@@ -73,7 +75,7 @@ class Yolo11Backend(PoseBackend):
 
     def _build_model(self):
         os.makedirs(MODEL_DIR, exist_ok=True)
-        preferred_path = os.path.join(MODEL_DIR, YOLO_POSE_MODEL)
+        preferred_path = os.path.join(MODEL_DIR, self.model_filename)
 
         if not os.path.exists(preferred_path):
             self._ensure_weights_under_models(preferred_path)
@@ -92,7 +94,7 @@ class Yolo11Backend(PoseBackend):
         Ultralytics' auto-download while ``MODEL_DIR`` is the working
         directory so the file lands in the right place from the start.
         """
-        cwd_path = os.path.abspath(YOLO_POSE_MODEL)
+        cwd_path = os.path.abspath(self.model_filename)
         if (os.path.exists(cwd_path)
                 and os.path.dirname(cwd_path) != os.path.abspath(MODEL_DIR)):
             shutil.move(cwd_path, preferred_path)
@@ -104,7 +106,7 @@ class Yolo11Backend(PoseBackend):
             with SuppressStderr():
                 # Instantiating YOLO with a bare filename triggers an
                 # auto-download into the current working directory.
-                _ = YOLO(YOLO_POSE_MODEL)
+                _ = YOLO(self.model_filename)
         finally:
             os.chdir(original_cwd)
 
@@ -139,7 +141,8 @@ class Yolo11Backend(PoseBackend):
         if CLAHE_ENABLED:
             roi = apply_clahe(roi)
 
-        landmarks = self._infer_landmarks(roi)
+        target_box = (x - px, y - py, w, h)
+        landmarks = self._infer_landmarks(roi, target_box=target_box)
         if landmarks is None:
             return None, None
 
@@ -147,7 +150,11 @@ class Yolo11Backend(PoseBackend):
         # video mode without confusing any internal tracker state.
         if FLIP_TTA_ENABLED:
             flipped_roi = cv2.flip(roi, 1)
-            flipped_landmarks = self._infer_landmarks(flipped_roi)
+            tx, ty, tw, th = target_box
+            flipped_box = (roi.shape[1] - tx - tw, ty, tw, th)
+            flipped_landmarks = self._infer_landmarks(
+                flipped_roi, target_box=flipped_box
+            )
             if flipped_landmarks is not None:
                 landmarks = self._merge_flipped(landmarks, flipped_landmarks)
 
@@ -174,7 +181,7 @@ class Yolo11Backend(PoseBackend):
         return entry, analysis
 
     def estimate_full_frame(self, frame) -> List[Tuple[dict, dict]]:
-        """Run one full-frame YOLO11-Pose pass and return all valid people.
+        """Run one full-frame YOLO-Pose pass and return all valid people.
 
         The returned landmark entries use the full frame as their coordinate
         base so drawing can reuse the existing ROI-aware helpers.
@@ -252,11 +259,11 @@ class Yolo11Backend(PoseBackend):
     # ------------------------------------------------------------------
     # Internals
 
-    def _infer_landmarks(self, roi):
+    def _infer_landmarks(self, roi, target_box=None):
         """Run YOLO-Pose on a ROI and return a COCO-17 landmark list, or None.
 
-        When multiple persons are detected inside the (padded) ROI, we pick
-        the one with the highest bbox confidence.
+        When multiple persons are detected inside the padded ROI, match the
+        requested detection box before using confidence as a fallback.
         """
         with SuppressStderr():
             results = self._model(
@@ -276,7 +283,31 @@ class Yolo11Backend(PoseBackend):
 
         boxes = getattr(result, "boxes", None)
         person_idx = 0
-        if boxes is not None and boxes.conf is not None and len(boxes.conf) > 1:
+        if (target_box is not None and boxes is not None
+                and boxes.xyxy is not None and len(boxes.xyxy) > 1):
+            tx, ty, tw, th = target_box
+            target = (tx, ty, tx + tw, ty + th)
+            coordinates = boxes.xyxy.cpu().numpy()
+            overlaps = []
+            for x1, y1, x2, y2 in coordinates:
+                ix1, iy1 = max(x1, target[0]), max(y1, target[1])
+                ix2, iy2 = min(x2, target[2]), min(y2, target[3])
+                intersection = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                box_area = max(0, x2 - x1) * max(0, y2 - y1)
+                target_area = tw * th
+                union = box_area + target_area - intersection
+                overlaps.append(intersection / union if union > 0 else 0.0)
+            if max(overlaps) > 0:
+                person_idx = int(max(range(len(overlaps)), key=overlaps.__getitem__))
+            else:
+                center_x, center_y = tx + tw / 2, ty + th / 2
+                distances = [
+                    (float((x1 + x2) / 2) - center_x) ** 2
+                    + (float((y1 + y2) / 2) - center_y) ** 2
+                    for x1, y1, x2, y2 in coordinates
+                ]
+                person_idx = int(min(range(len(distances)), key=distances.__getitem__))
+        elif boxes is not None and boxes.conf is not None and len(boxes.conf) > 1:
             conf_tensor = boxes.conf.cpu().numpy()
             person_idx = int(conf_tensor.argmax())
 
