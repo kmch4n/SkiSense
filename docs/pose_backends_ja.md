@@ -2,51 +2,61 @@
 
 [English](pose_backends.md) | **日本語**
 
-SkiSense は姿勢推定エンジンを 2 種類から選べる。`yolo11` は移行前のエンジンで
-あり、非推奨ではなく正式にサポートを継続している。したがって旧来の 2D 動作へは
-常にフラグ 1 つで戻せる。
+通常実行では姿勢推定エンジンを 3 種類から選べる。既定の `yolo26` は公開重みを
+使い、CPU・MPS・CUDA で実行できる。`yolo11` は従来の 2D 出力を再現し、
+`sam3d` は 3D の体と足先を推定する。
 
 **実行ごとの切り替え — CLI フラグ**（最優先）:
 
 ```bash
-python run.py --pose-backend yolo11 video.mp4     # 旧来の 2D エンジン
-python run.py --pose-backend sam3d  video.mp4     # 3D エンジン
-python run.py --pose-backend yolo11 skier.jpg --image
+python run.py --pose-backend yolo26 video.mp4     # 既定の 2D エンジン
+python run.py --pose-backend yolo11 video.mp4     # 従来の 2D エンジン
+python run.py --pose-backend sam3d video.mp4      # 3D エンジン、CUDA 必須
+python run.py --pose-backend yolo26 skier.jpg --image
 ```
 
 **恒久的な既定値 — `.env`:**
 
 ```bash
-SKISENSE_POSE_BACKEND=sam3d    # 既定: SAM 3D Body（3D・高精度）
-SKISENSE_POSE_BACKEND=yolo11   # YOLO11-Pose（2D・軽量・高速）
+SKISENSE_POSE_BACKEND=yolo26   # 必要に応じて yolo11 または sam3d に変更
 ```
 
-優先順位は `--pose-backend` → `SKISENSE_POSE_BACKEND` → `sam3d` である。
+優先順位は `--pose-backend` → `SKISENSE_POSE_BACKEND` → `yolo26` である。
 選択されたエンジンは起動時バナーの `- Pose:` 行に出力されるため、長時間の
-処理を始める前にどちらが有効か確認できる。
+処理を始める前に有効なモデルを確認できる。
 
 人物検出（YOLOv8x）・トラッキング（Deep SORT）・ズーム・スコアリングの
 パイプラインは共通で、姿勢推定部だけが差し替わる。各バックエンドは自身の
 トポロジ（`pose_topology.py`）を宣言し、`analyze_ski_pose` と描画ヘルパーが
-それに自動追従する。`--fast` / `--high` / `--target-mode` はどちらのエンジン
+それに自動追従する。`--fast` / `--high` / `--target-mode` は 3 種類のエンジン
 でも動作する。
 
 ## 比較表
 
-| 項目 | SAM 3D Body | YOLO11-Pose |
-|---|---|---|
-| バックエンド名 | `sam3d`（既定） | `yolo11`（旧来モード） |
-| トポロジ | MHR-21（体 + 足先 + 手首） | COCO-17 |
-| 次元 | 3D（カメラ座標）+ 2D 投影 | 2D 画像座標のみ |
-| 関節角度 | 膝・股関節・足首を 3D で算出（視点不変） | 膝・股関節を 2D で算出 |
-| 足首角度 | ◎ 取得可（足先ランドマークあり） | ✗ N/A（COCO-17 に足先なし） |
-| 肩の傾き | 2D 画像平面 | 2D 画像平面 |
-| デバイス | **CUDA 必須** | CPU / MPS / CUDA |
-| 速度（目安） | ~1–2 s/frame（RTX 4060） | 数 ms/ROI |
-| VRAM（目安） | ~3.4 GB（FP16, body-only） | ~2–3 GB |
-| 重み入手 | HuggingFace ゲート（要申請 + `hf auth login`） | Ultralytics 自動 DL |
-| ライセンス | SAM License（Apache 2.0 相当・商用可） | AGPL-3.0（Ultralytics） |
-| メッシュ出力 | ◎ あり（`pred_vertices`） | ✗ なし |
+| 項目 | YOLO26-Pose | YOLO11-Pose | SAM 3D Body |
+|---|---|---|---|
+| バックエンド名 | `yolo26`（既定） | `yolo11` | `sam3d` |
+| トポロジ | COCO-17 | COCO-17 | MHR-21（体 + 足先 + 手首） |
+| 次元 | 2D 画像座標 | 2D 画像座標 | 3D（カメラ座標）+ 2D 投影 |
+| 関節角度 | 膝・股関節を 2D で算出 | 膝・股関節を 2D で算出 | 膝・股関節・足首を 3D で算出 |
+| 足首角度 | N/A | N/A | 取得可 |
+| 肩の傾き | 2D 画像平面 | 2D 画像平面 | 2D 画像平面 |
+| デバイス | CPU / MPS / CUDA | CPU / MPS / CUDA | **CUDA 必須** |
+| 重み入手 | Ultralytics 自動 DL | Ultralytics 自動 DL | Hugging Face ゲート（要申請 + `hf auth login`） |
+| ライセンス | Ultralytics AGPL-3.0 | Ultralytics AGPL-3.0 | SAM License |
+| メッシュ出力 | なし | なし | あり（`pred_vertices`） |
+
+既定値は導入の容易さと少数のサンプルで観察した結果を踏まえた選択であり、
+スキー姿勢推定の精度順位を検証したものではない。手元の映像では
+[`compare.py`](pose_comparison.md) で出力を確かめられる。
+
+## YOLO26-Pose（`yolo26`）
+
+既定の通常実行モデルは `yolo26x-pose.pt` を使い、COCO-17 の体の点を推定する。
+別の YOLO26-Pose 重みを使う場合は `SKISENSE_YOLO26_POSE_MODEL` で指定する。
+重みは初回に Ultralytics から自動取得される。YOLO11 と同じ 2D 採点経路を
+使うため、視点の影響を受け、足首角度は算出できない。`ultralytics>=8.4.215`
+が必要である。
 
 ## SAM 3D Body（`sam3d`）
 
@@ -85,20 +95,20 @@ Ultralytics の 2D 姿勢推定モデルであり、SAM 3D Body 移行前に Ski
 
 ## 使い分けの指針
 
-- **精密なフォーム分析・本番の可視化** → `sam3d`。視点不変の 3D 角度と足首評価、
-  メッシュが活きる。CUDA があり処理時間を許容できる場合。
-- **素早い確認・CUDA 非搭載機・大量バッチの一次スクリーニング** → `yolo11`。
+- **モデルのアクセス申請なしで始める** → `yolo26`。
+- **3D の体と足先を見る** → CUDA とゲート重みを用意して `sam3d` を使う。
+  評価対象の映像でも推定結果を確認する。
 - **移行前の出力を再現したい場合** → `yolo11`。SAM 3D Body 移行前と同一の
   エンジン・同一の COCO-17 トポロジである。
 
 ## バックエンドをまたいだスコアは比較できない
 
 バックエンドを切り替えると、精度だけでなく測定値そのものが変わる。したがって
-`sam3d` のスコアと `yolo11` のスコアを直接比べてはならない。
+`sam3d` のスコアと YOLO のスコアを直接比べてはならない。
 
 - 膝・股関節の角度は、`sam3d` ではカメラ空間の 3D ベクトルから、`yolo11` では
-  画像平面に投影された座標から算出する。同じ姿勢でも斜め視点では度数が異なる。
-- 総合スコアは測定できた関節の平均である。`yolo11` は左右の足首角度を測定できない
+  `yolo11` と `yolo26` では画像平面に投影された座標から算出する。同じ姿勢でも斜め視点では度数が異なる。
+- 総合スコアは測定できた関節の平均である。YOLO は左右の足首角度を測定できない
   ため、7 項目ではなく 5 項目の平均になる。
 
 シーズンを通したクリップ群を見比べるときなど、比較を行う場面ではバックエンドを
@@ -106,11 +116,14 @@ Ultralytics の 2D 姿勢推定モデルであり、SAM 3D Body 移行前に Ski
 
 ## 既知の制約
 
-- `yolo11` は COCO-17 トポロジのため足首角度を出せない（info panel は `N/A`）。
+- YOLO11 と YOLO26 は COCO-17 トポロジのため足首角度を出せない（info panel は `N/A`）。
 - `sam3d` は CUDA 必須。`SKISENSE_DEVICE` が CUDA に解決されない環境で `sam3d` を
   選ぶと、バックエンド構築時に `RuntimeError` を送出する。エラーメッセージは
-  `--pose-backend yolo11` への切り替えを案内する。
+  `--pose-backend yolo26` への切り替えを案内する。
 - `sam3d` は関節ごとの信頼度を公開しないため、使用する関節の visibility は一律
   `1.0` で埋めている。その結果 `SKISENSE_POSE_VISIBILITY_THRESHOLD` および
   `SKISENSE_POSE_VISIBILITY_THRESHOLD_LEGS` は `sam3d` では効果を持たず、遮蔽された
-  関節もモデルの推定値のまま採点される。`yolo11` では両設定とも有効である。
+  関節もモデルの推定値のまま採点される。YOLO11 と YOLO26 では両設定とも有効である。
+
+RTMW3D は [`compare.py`](pose_comparison.md) で出力を見比べられる。
+3D 座標系と採点への適用は検証中のため、通常実行の `run.py` では選べない。
