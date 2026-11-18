@@ -137,6 +137,8 @@ SAM3D_HF_REPO = _get_str(
 SAM3D_USE_HAND_REFINE = _get_bool('SKISENSE_SAM3D_USE_HAND_REFINE', False)
 
 # --- Ultralytics YOLO-Pose settings (yolo26 and yolo11) --------------------
+# YOLO_POSE_CONFIDENCE is passed as model(conf=...) for person/instance
+# detection; joint visibility filtering uses POSE_VISIBILITY_THRESHOLD(_LEGS).
 # Ultralytics auto-downloads the weights on first run; SkiSense caches
 # them under models/.
 YOLO_POSE_MODEL = _get_str('SKISENSE_YOLO_POSE_MODEL', 'yolo11x-pose.pt')
@@ -153,8 +155,8 @@ FLIP_TTA_ENABLED = _get_bool('SKISENSE_FLIP_TTA_ENABLED', False)
 # Zoom Settings (Center Tracking)
 # =============================================================================
 ZOOM_ENABLED = _get_bool('SKISENSE_ZOOM_ENABLED', True)           # True: enable center zoom, False: disable
-ZOOM_SCALE = _get_float('SKISENSE_ZOOM_SCALE', 1.2, min_val=1.0, max_val=5.0)              # Fallback zoom magnification
-ZOOM_SMOOTHING = _get_float('SKISENSE_ZOOM_SMOOTHING', 0.08, min_val=0.0, max_val=1.0)         # EMA smoothing factor (0.0-1.0, lower = smoother)
-ZOOM_PADDING = _get_float('SKISENSE_ZOOM_PADDING', 1.0, min_val=0.5, max_val=5.0)            # Padding multiplier around bounding box
+ZOOM_SCALE = _get_float('SKISENSE_ZOOM_SCALE', 1.2, min_val=1.0, max_val=5.0)              # Stored for compatibility; unused by current zoom logic
+ZOOM_SMOOTHING = _get_float('SKISENSE_ZOOM_SMOOTHING', 0.08, min_val=0.0, max_val=1.0)         # Stored for compatibility; no EMA is applied
+ZOOM_PADDING = _get_float('SKISENSE_ZOOM_PADDING', 1.0, min_val=0.5, max_val=5.0)            # Stored for compatibility; unused by current zoom logic
 ZOOM_TARGET_AREA_RATIO = _get_float('SKISENSE_ZOOM_TARGET_AREA_RATIO', 0.35, min_val=0.05, max_val=0.95)  # Target skier bbox area ratio in the output frame
 ZOOM_MAX_SCALE = _get_float('SKISENSE_ZOOM_MAX_SCALE', 5.0, min_val=1.0, max_val=20.0)  # Maximum dynamic zoom magnification

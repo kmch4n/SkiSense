@@ -9,7 +9,11 @@ from typing import Optional, Tuple, List
 
 
 class ZoomTracker:
-    """Tracks a target and applies smooth zoom to keep them centered."""
+    """Tracks a selected target with immediate bbox-based zoom and centering.
+
+    Legacy scale/smoothing/padding arguments are accepted but unused in the
+    current dynamic-zoom algorithm. They do not change output frames.
+    """
 
     def __init__(
         self,
@@ -26,9 +30,9 @@ class ZoomTracker:
         Args:
             frame_width: Width of the input frame
             frame_height: Height of the input frame
-            zoom_scale: Fallback zoom magnification
-            smoothing: EMA smoothing factor (0.0-1.0, lower = smoother)
-            padding: Padding multiplier around bounding box
+            zoom_scale: Legacy compatibility parameter, currently unused
+            smoothing: Legacy compatibility parameter; no EMA is applied
+            padding: Legacy compatibility parameter, currently unused
             target_area_ratio: Target bbox area ratio in the output frame
             max_scale: Maximum dynamic zoom magnification
         """
@@ -40,7 +44,7 @@ class ZoomTracker:
         self.target_area_ratio = target_area_ratio
         self.max_scale = max_scale
 
-        # State variables for smoothing
+        # State variables retaining the historical smooth_* names (updated immediately)
         self.smooth_center_x: Optional[float] = None
         self.smooth_center_y: Optional[float] = None
         self.smooth_scale: Optional[float] = None

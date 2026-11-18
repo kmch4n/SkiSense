@@ -37,15 +37,17 @@ installation instructions are on the PyTorch site):
 ```bash
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
-# Only needed for the SAM 3D Body backend (see docs/pose_backends.md):
+# Only needed for the SAM 3D Body backend:
 pip install -r requirements-sam3d.txt
+# Also clone Meta's sam-3d-body source and authenticate gated weights;
+# see docs/sam3d_setup.md for the complete process.
 ```
 
 Run:
 
 ```bash
 python run.py video.mp4                     # process a video (input/video.mp4 by default)
-python run.py --fast video.mp4              # skip per-frame detect/track; one pass per frame
+python run.py --fast video.mp4              # full-frame pose; longest+zoom may pre-scan with YOLO/Deep SORT
 python run.py --pose-backend sam3d video.mp4    # optional 3D pose engine (CUDA required)
 python run.py --pose-backend yolo11 video.mp4   # earlier 2D pose engine
 python run.py skier.jpg --image             # process a single image
@@ -92,8 +94,7 @@ SKISENSE_POSE_BACKEND=yolo26   # change to yolo11 or sam3d when needed
 The CLI flag wins over `.env`. The active engine is printed on the
 `- Pose:` line of the startup banner.
 
-- **SAM 3D Body** — 3D MHR keypoints + body mesh; view-invariant joint
-  angles including the ankle. CUDA required; ~1–2 s/frame.
+- **SAM 3D Body** — estimated camera-space 3D MHR joints + body mesh, including ankle angles. CUDA and gated weights are required; viewpoint and occlusion errors remain possible. Latency depends on the machine and model.
 - **YOLO26-Pose** — default 2D COCO-17 engine; public weights and CPU support.
 - **YOLO11-Pose** — 2D COCO-17 keypoints; fast and CPU-capable, but the
   ankle angle is `N/A` (no foot landmark).
@@ -106,19 +107,25 @@ are measured differently, and YOLO averages 5 items where `sam3d` averages
 
 ## Architecture
 
-Each frame runs a three-step pipeline:
+The standard video mode follows three steps (the fast mode differs, and
+`longest` target selection may first scan the whole video):
 
-1. **Detection & tracking** — YOLOv8x detects persons; Deep SORT assigns
-   persistent track IDs.
+1. **Detection & tracking** — YOLOv8x detects persons; Deep SORT can assign
+   persistent track IDs for target selection.
 2. **Pose estimation** — the selected backend returns keypoints (3D + 2D
    for SAM 3D Body, 2D for YOLO11/YOLO26); `pose_analyzer` evaluates joint
    angles.
-3. **Rendering** — `ZoomTracker` applies smooth zoom, skeleton/bbox are
-   drawn through the single `transform_point_to_zoom()` choke point, and
-   the info panel is overlaid.
+3. **Rendering** — when enabled, `ZoomTracker` applies immediate bbox-based
+   dynamic crop/zoom (the smoothing configuration is not currently applied).
+   The selected bbox and skeleton use `transform_point_to_zoom()`, then the
+   information panel is overlaid. Zoom-off overlay limitations: [#15](https://github.com/kmch4n/SkiSense/issues/15).
 
 Key modules: `config.py`, `pose_topology.py`, `backends/`,
 `pose_analyzer.py`, `zoom_tracker.py`, `main.py`, `image_processor.py`.
+
+## Specifications and development process
+
+The proposed [specification baseline](docs/spec/README.md) distinguishes current behavior, intended behavior, and verified results. For optional SAM 3D Body source/weights, see the [setup guide](docs/sam3d_setup.md). Known limitations are tracked in GitHub Issues.
 
 ## More (日本語)
 

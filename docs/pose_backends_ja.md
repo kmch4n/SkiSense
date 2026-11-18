@@ -25,18 +25,14 @@ SKISENSE_POSE_BACKEND=yolo26   # 必要に応じて yolo11 または sam3d に�
 選択されたエンジンは起動時バナーの `- Pose:` 行に出力されるため、長時間の
 処理を始める前に有効なモデルを確認できる。
 
-人物検出（YOLOv8x）・トラッキング（Deep SORT）・ズーム・スコアリングの
-パイプラインは共通で、姿勢推定部だけが差し替わる。各バックエンドは自身の
-トポロジ（`pose_topology.py`）を宣言し、`analyze_ski_pose` と描画ヘルパーが
-それに自動追従する。`--fast` / `--high` / `--target-mode` は 3 種類のエンジン
-でも動作する。
+通常動画モードではYOLOv8xで人物検出し、必要に応じてDeep SORTで対象を選び、選択バックエンドで姿勢を推定する。`--fast`は別経路であり、YOLO系は複数人の全画面推定に対応する一方、SAM3Dは検出器を無効化しているため全画面単一bboxへのフォールバックになる（[Issue #16](https://github.com/kmch4n/SkiSense/issues/16)）。`--high`はCLIで受け付けるが実際の高精度処理は未実装（[#4](https://github.com/kmch4n/SkiSense/issues/4)）。`--target-mode`の動作は現在ズーム状態にも依存する（[#15](https://github.com/kmch4n/SkiSense/issues/15)）。各エンジンのトポロジは`pose_topology.py`で宣言される。
 
 ## 比較表
 
 | 項目 | YOLO26-Pose | YOLO11-Pose | SAM 3D Body |
 |---|---|---|---|
 | バックエンド名 | `yolo26`（既定） | `yolo11` | `sam3d` |
-| トポロジ | COCO-17 | COCO-17 | MHR-21（体 + 足先 + 手首） |
+| トポロジ | COCO-17 | COCO-17 | MHR由来の63点サブセット（体・足先・手首と未使用の手指点） |
 | 次元 | 2D 画像座標 | 2D 画像座標 | 3D（カメラ座標）+ 2D 投影 |
 | 関節角度 | 膝・股関節を 2D で算出 | 膝・股関節を 2D で算出 | 膝・股関節・足首を 3D で算出 |
 | 足首角度 | N/A | N/A | 取得可 |
@@ -60,21 +56,15 @@ SKISENSE_POSE_BACKEND=yolo26   # 必要に応じて yolo11 または sam3d に�
 
 ## SAM 3D Body（`sam3d`）
 
-Meta が 2025-11-19 に公開した単一画像 3D 人体メッシュ復元モデル。MHR
-（Momentum Human Rig）パラメトリックモデルで、視点に依存しない真の関節角度が
-得られる。SkiSense は MHR70 キーポイントの先頭 63（体・足先・手首）を使用する。
+Meta が 2025-11-19 に公開した単一画像3D人体メッシュ復元モデル。MHR（Momentum Human Rig）による**推定**3D関節角度を算出するが、実測の真値ではない。SkiSenseの`MHR_BODY`はMHR70の先頭**63点**を保持し、体・足先・手首の一部を評価や描画に使用する（残りには未使用の手指点を含む）。UI等の「MHR-21」は63点配列の要素数を表すものではない。
 
-- **強み**: 斜め視点でも膝・股関節・足首角度が歪まない。内脚の遮蔽に強い。
-  足首の前圧（knee→ankle→toe）まで評価でき、人体メッシュも取得できる。
-- **弱み**: CUDA 必須。1 フレーム数秒と重く、動画はオフライン処理前提。
-  重みがゲート公開のため初回に HuggingFace のアクセス申請が要る。
+- **強み**: 2D投影角ではなく、復元した3D体格から膝・股関節・足首の角度（knee→ankle→toeを含む）を算出し、人体メッシュを取得できる。ただし斜め視点・遮蔽に起因する推定誤差は残り、スキー映像での有効性は未検証である。
+- **弱み**: CUDA必須で、ゲート公開の重みには初回のHugging Faceアクセス申請が必要。処理時間はチェックポイント・機材・映像解像度に依存するため、長時間動画の処理計画には実測が必要。
 - **設定**:
   - `SKISENSE_SAM3D_HF_REPO`: `facebook/sam-3d-body-dinov3`（既定, 840M）/
     `facebook/sam-3d-body-vith`（631M, 軽量・低 VRAM）
-  - `SKISENSE_SAM3D_USE_HAND_REFINE`: 手指デコーダ。スキー採点では不要のため
-    既定 `false`（VRAM・レイテンシをほぼ半減）
-- **セットアップ**: [`../notes/sam3d_setup.md`](../notes/sam3d_setup.md) を参照
-  （detectron2 / MoGe は不要）。
+  - `SKISENSE_SAM3D_USE_HAND_REFINE`: 手指精緻化は既定で無効。採点に手指は使わない。VRAM・処理時間の削減幅は環境に依存し、実測が必要。
+- **セットアップ**: [`sam3d_setup.md`](sam3d_setup.md) を参照。Metaのソース配置とゲート重みの認証が必要。上流公式手順はDetectron2の導入を含むが、SkiSenseはその検出器を使わない設定であり、実環境の依存性は別途検証する。
 
 ## YOLO11-Pose（`yolo11`）
 
@@ -83,15 +73,14 @@ Ultralytics の 2D 姿勢推定モデルであり、SAM 3D Body 移行前に Ski
 の結果を再現できるようにし、また CUDA 非搭載機でも動かせるようにするため、
 非推奨扱いにせず意図的に維持している。
 
-- **強み**: CPU でも動く。1 フレーム数 ms と高速で、リアルタイム寄りの確認や
-  CUDA 非搭載機での利用に向く。重みは自動ダウンロード。
+- **強み**: CPUや対応GPUで実行でき、ゲート公開の重みは不要。重みは自動ダウンロードされる。処理時間はモデルのサイズ・入力解像度・ハードウェア・実行モードに依存するため、リアルタイム性能の判断には対象環境での実測が必要。
 - **弱み**: 2D のため斜め視点で関節角度に投影歪みが出る。COCO-17 に足先
   ランドマークがないため**足首角度は N/A**（スコアから除外）。
 - **設定**:
   - `SKISENSE_YOLO_POSE_MODEL`: `yolo11x-pose.pt`（既定）他 n/s/m/l/x
-  - `SKISENSE_YOLO_POSE_CONFIDENCE`: キーポイント信頼度しきい値（既定 0.25）
+  - `SKISENSE_YOLO_POSE_CONFIDENCE`: YOLO-Poseの**人物／インスタンス検出信頼度しきい値**（既定0.25、YOLO11/YOLO26共通）。Ultralyticsの`conf=`に渡す値であり、個々の関節の採用しきい値ではない。関節の可視性は`keypoints.conf`と`SKISENSE_POSE_VISIBILITY_THRESHOLD`／`SKISENSE_POSE_VISIBILITY_THRESHOLD_LEGS`で判定する。
   - `SKISENSE_CLAHE_ENABLED`: ROI への CLAHE 適用（既定 false）
-  - `SKISENSE_FLIP_TTA_ENABLED`: 水平反転 TTA（既定 false, 推論コスト 2 倍）
+  - `SKISENSE_FLIP_TTA_ENABLED`: 水平反転TTA（既定false。ROIモードでは姿勢推論を追加でもう1回実行し、実際の総処理時間は環境に依存）
 
 ## 使い分けの指針
 
@@ -106,10 +95,9 @@ Ultralytics の 2D 姿勢推定モデルであり、SAM 3D Body 移行前に Ski
 バックエンドを切り替えると、精度だけでなく測定値そのものが変わる。したがって
 `sam3d` のスコアと YOLO のスコアを直接比べてはならない。
 
-- 膝・股関節の角度は、`sam3d` ではカメラ空間の 3D ベクトルから、`yolo11` では
-  `yolo11` と `yolo26` では画像平面に投影された座標から算出する。同じ姿勢でも斜め視点では度数が異なる。
+- 膝・股関節の角度は`sam3d`では推定3D座標、`yolo11`と`yolo26`では2D画像平面の座標から算出する。同じ姿勢でも斜め視点では度数が異なる。
 - 総合スコアは測定できた関節の平均である。YOLO は左右の足首角度を測定できない
-  ため、7 項目ではなく 5 項目の平均になる。
+  ため、最大7項目ではなく最大5項目の平均になる（欠損・低信頼度はさらに除外）。
 
 シーズンを通したクリップ群を見比べるときなど、比較を行う場面ではバックエンドを
 固定すること。
