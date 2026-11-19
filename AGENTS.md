@@ -33,9 +33,9 @@ See `docs/pose_backends.md` and `docs/pose_comparison.md`.
     roadmap).
   - `docs/pose_backends.md` is English (canonical);
     `docs/pose_backends_ja.md` is its Japanese version.
-  - `docs/sam3d_setup.md` is English; `docs/sam3d_setup_ja.md` is its
-    Japanese version.
-  - `docs/pose_comparison.md` is English.
+  - `docs/sam3d_setup.md` and `docs/pose_comparison.md` are English.
+  - `docs/spec/README.md` is English; the other `docs/spec/*_ja.md`
+    files are Japanese.
 - When editing docs, keep each EN/JA pair in sync.
 
 ## Working Mode
@@ -46,6 +46,23 @@ See `docs/pose_backends.md` and `docs/pose_comparison.md`.
   explicitly asks.
 - Prefer surgical edits. Do not rewrite large files unless the structure
   is genuinely being improved.
+
+## Specification-Driven Changes
+
+`docs/spec/` is the shared change contract for agents and developers.
+Read `docs/spec/README.md` and `docs/spec/change_protocol_ja.md` before
+changing behavior.
+
+- Keep as-is behavior, intended behavior, and verified evidence separate.
+  Code reading alone does not make a model's accuracy or real-video
+  behavior "verified".
+- Update the relevant `docs/spec/` files and
+  `docs/spec/verification_matrix_ja.md` in the same PR as any behavioral
+  change.
+- State compatibility and comparability impacts when changing scoring,
+  coordinate frames, units, model defaults, or emitted JSON.
+- Fill in `.github/pull_request_template.md`, including the tests that
+  were **not** run.
 
 ## Code Style
 
@@ -68,12 +85,15 @@ python run.py my_ski_video.mp4
 # Run with a still image
 python run.py skier.jpg --image
 
-# High precision mode placeholder (frame interpolation is not implemented)
+# High precision mode placeholder (not implemented, Issue #4)
 python run.py --high
 
-# Fast mode: skip per-frame YOLOv8 + Deep SORT; feed the full frame
-# as a single bbox into the pose backend. Intended for single-skier videos.
+# Fast mode: skip per-frame YOLOv8 + Deep SORT and run the backend on the
+# full frame. Under sam3d there is no person detection (Issue #16).
 python run.py --fast
+
+# Main-target selection for zoom (default: longest)
+python run.py --target-mode largest
 
 # Switch pose engine for a single run (overrides SKISENSE_POSE_BACKEND)
 python run.py --pose-backend sam3d
@@ -84,7 +104,11 @@ python compare.py video.mp4 --frames 30,90
 python compare.py skier.jpg --models sam3d,yolo11,yolo26,rtmw3d
 
 # Unit tests (unittest, no extra framework)
-python -m unittest discover -s tests
+python -m unittest discover -s tests -v
+
+# CI static checks (.github/workflows/static-checks.yml, stdlib only)
+python -m compileall -q run.py compare.py src tests
+python -m unittest discover -s tests -p 'test_docs_links.py' -v
 
 # Install dependencies (PyTorch must be installed first, separately)
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121  # CUDA
@@ -114,7 +138,8 @@ Runtime; see `docs/pose_comparison.md`.
 - Environment config: `src/skisense/config.py`, `.env.example`
 - Tests: `tests/`
 - Input / output / weights: `input/`, `output/`, `models/` (git-ignored)
-- Helper scripts: `scripts/` (for example `sam3d_smoke.py`)
+- Specification: `docs/spec/`
+- CI and PR template: `.github/`
 - Private notes: `notes/` (git-ignored; do not link from tracked docs)
 - Vendored SAM 3D Body: `external/sam-3d-body/` (git-ignored)
 
@@ -132,7 +157,7 @@ The video processing follows a strict 3-step pipeline per frame:
    COCO-17 keypoints. `analyze_ski_pose()` reads the backend's
    `PoseTopology` and evaluates knee/hip/ankle in 3D when `is_3d` is
    set, otherwise in image space; shoulder tilt is always 2D.
-3. **Rendering**: ZoomTracker applies smooth zoom; landmarks/bboxes are
+3. **Rendering**: ZoomTracker applies zoom; landmarks/bboxes are
    drawn in zoom-transformed coordinates using the 2D keypoints; the
    info panel is overlaid.
 
@@ -173,9 +198,10 @@ attached to landmarks so existing draw helpers keep working unchanged.
   Ultralytics log-level overrides. Imported eagerly by `main.py` and
   every backend so native library noise is suppressed uniformly when
   `SKISENSE_DEBUG=false`.
-- **zoom_tracker.py**: Stateful tracker using EMA smoothing. Selects the
-  main target and applies smooth center tracking with a 30-frame
-  detection timeout.
+- **zoom_tracker.py**: Stateful tracker that selects the main target and
+  applies immediate bbox-based zoom and centering with a 30-frame
+  detection timeout. The legacy scale/smoothing/padding arguments are
+  accepted but unused; no EMA is applied.
 - **main.py**: Video orchestration: device resolution, model
   initialization, frame loop, video I/O. It is orchestration-heavy;
   read it before changing pipeline behavior.
@@ -209,6 +235,10 @@ See `.env.example` for the full surface. Important settings:
   `facebook/sam-3d-body-vith` (smaller, faster)
 - `SKISENSE_SAM3D_USE_HAND_REFINE`: enable the hand decoder pass;
   default `false` since SkiSense does not score hands
+- `SKISENSE_YOLO_CONFIDENCE`: YOLOv8x person-detection threshold
+  (default `0.3`). `SKISENSE_YOLO_POSE_CONFIDENCE` (default `0.25`) is
+  the separate person/instance threshold passed to YOLO-Pose as
+  `conf=`; neither filters individual joints.
 - `SKISENSE_POSE_VISIBILITY_THRESHOLD`: minimum keypoint confidence for
   upper-body joints (default `0.5`). SAM 3D Body does not expose
   per-joint confidence and fills `1.0`, so this is inert under `sam3d`.
@@ -216,6 +246,9 @@ See `.env.example` for the full surface. Important settings:
   knee / ankle (default `0.3`). Same `sam3d` caveat.
 - `SKISENSE_ROI_PADDING`: ROI bbox expansion ratio before pose
   estimation (default `0.3`).
+- `SKISENSE_ZOOM_TARGET_AREA_RATIO` / `SKISENSE_ZOOM_MAX_SCALE` drive the
+  dynamic zoom. `SKISENSE_ZOOM_SCALE`, `SKISENSE_ZOOM_SMOOTHING`, and
+  `SKISENSE_ZOOM_PADDING` are accepted for compatibility but unused.
 
 ### Model Weights
 
@@ -238,22 +271,32 @@ See `.env.example` for the full surface. Important settings:
 Video mode writes to `output/YYYYMMDD_HHMMSS/`:
 
 - `video_pose.mp4` (`video_pose_fast.mp4` with `--fast`): annotated video
-- `best_shot.jpg`: highest-scoring frame
+- `best_shot.jpg`: highest-scoring frame (only saved when a score is positive)
 - `video.mp4`: copy of the input video
 
 Image mode writes `image_pose.jpg` and `image.jpg` to the same layout.
 `compare.py` writes to `output/comparison_YYYYMMDD_HHMMSS/`.
 
-## Known Implementation Traits
+## Known Issues
 
+`docs/spec/behavior_ja.md` is the authoritative as-is baseline. Notable
+issues:
+
+- `--high` only logs its intent; frame interpolation is not implemented
+  (#4).
+- With `SKISENSE_ZOOM_ENABLED=false`, target bbox/skeleton drawing is
+  missing and target selection differs (#15).
+- `--fast --pose-backend sam3d` has no person detector and uses a single
+  whole-image bbox (#16).
+- Video output does not check `VideoWriter.isOpened()` (#17).
 - `process_video()` in `main.py` still contains some duplicated inline
   steps even though several helpers have been extracted.
-- `--high` only logs its intent; frame interpolation is not implemented.
 
 ## Validation Expectations
 
-- Run `python -m unittest discover -s tests` after changing backend
-  selection, comparison, or config logic.
+- Run `python -m unittest discover -s tests -v` after changing backend
+  selection, comparison, config, or docs. CI runs only the stdlib static
+  checks listed under Commands.
 - If you change pipeline behavior, run the smallest validation that
   matches the change. Check for import/runtime errors, config/path
   regressions, output file generation, and overlay placement.
