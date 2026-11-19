@@ -44,9 +44,15 @@ Thumbs.db
 *.swp
 *.swo
 
-# AI tools
-.claude/
-.codex/
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# AI tools: share instructions, keep personal settings local
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
 
 # Vendored third-party repos (SAM 3D Body, etc.)
 external/
