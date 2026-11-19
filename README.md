@@ -123,9 +123,13 @@ The standard video mode follows three steps (the fast mode differs, and
 Key modules: `config.py`, `pose_topology.py`, `backends/`,
 `pose_analyzer.py`, `zoom_tracker.py`, `main.py`, `image_processor.py`.
 
-## Specifications and development process
+## Engineering specifications and development process
 
-The proposed [specification baseline](docs/spec/README.md) distinguishes current behavior, intended behavior, and verified results. For optional SAM 3D Body source/weights, see the [setup guide](docs/sam3d_setup.md). Known limitations are tracked in GitHub Issues.
+The [canonical English specification suite](docs/spec/README.md) documents the system architecture, command/configuration surface, normal and fast video pipelines, still-image processing, backend data contracts, joint scoring, zoom/rendering, model comparison and output/error semantics. It includes a [code-to-evidence matrix](docs/spec/verification-matrix.md) that identifies known defects and unverified behavior.
+
+**Specification-first changes are mandatory:** read the relevant contract, update the intended specification **before** editing runtime code, define acceptance tests, implement, and record verification in the same PR. The detailed, accepted protocol is [docs/spec/change-protocol.md](docs/spec/change-protocol.md); coding-agent guidance is in [AGENTS.md](AGENTS.md). The specs describe code-observed behavior, not a claim of scientific score validation or successful CUDA inference.
+
+For optional SAM 3D Body source/weights, see the [setup guide](docs/sam3d_setup.md).
 
 ## More (日本語)
 

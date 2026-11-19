@@ -108,7 +108,9 @@ YOLO26 も足先ランドマークがないため、足首角度は `N/A` とな
 
 ## 仕様書と変更管理
 
-[仕様書インデックス](docs/spec/README.md) に、現行動作、スコアの計算契約、[実装・検証対応表](docs/spec/verification_matrix_ja.md)、仕様駆動開発の変更手順をまとめている。現在の仕様書は提案段階であり、実装と実映像での検証を区別している。SAM 3D Body の導入には[セットアップガイド](docs/sam3d_setup.md)を参照。
+[英語の正式仕様書](docs/spec/README.md) に、アーキテクチャ、CLI、動画・静止画、バックエンド、採点、ズーム、出力、例外系および[実装・検証対応表](docs/spec/verification-matrix.md)をまとめている。機能や仕様を変更する際は、コード変更より先に英語仕様書を更新し、受入条件を明確化する。[変更管理手順](docs/spec/change-protocol.md)および[AGENTS.md](AGENTS.md)を参照。仕様書は現行実装の記録であり、滑走技術に関する採点精度を実証したものではない。
+
+SAM 3D Body の導入には[セットアップガイド](docs/sam3d_setup.md)を参照。
 
 ## License
 
