@@ -42,14 +42,14 @@ flowchart TD
     O --> P[Per-model overlays HTML and results JSON]
 ```
 
-The graph is conceptual, not a promise that all modes run each stage. In particular, `--fast` ordinarily bypasses per-frame YOLOv8x and Deep SORT, but **`--fast --target-mode longest` with zoom enabled performs a separate YOLO/Deep SORT pre-scan**. See [video-processing.md](video-processing.md).
+The graph is conceptual, not a promise that all modes run each stage. In normal video with `largest` and zoom disabled, Deep SORT still runs on every frame, but its tracks are not used for target rendering or analysis selection. With `longest` and zoom disabled, neither a pre-scan nor per-frame tracking runs. In particular, `--fast` ordinarily bypasses per-frame YOLOv8x and Deep SORT, but **`--fast --target-mode longest` with zoom enabled performs a separate YOLO/Deep SORT pre-scan**. See [video-processing.md](video-processing.md).
 
 ## 4. Mode matrix
 
 | Aspect | Normal video | Fast video | Still image | Model comparison |
 | --- | --- | --- | --- | --- |
 | Separate YOLOv8x person detection | Every frame | Only initial longest-track pre-scan when enabled | Once | Each sampled frame |
-| Deep SORT | Pre-scan for `longest`, or per-frame for `largest` when zoom enabled | Only longest-track pre-scan (conditional) | No | No |
+| Deep SORT | Pre-scan for `longest` with zoom enabled; per-frame for active `largest` regardless of zoom | Only `longest` pre-scan with zoom enabled | No | No |
 | Pose inference | Per detected bbox via `estimate` | `estimate_full_frame` | Largest detected bbox via `estimate` | Shared bbox via `estimate` for each selected model |
 | Subject choice | Tracked target if zoom enabled; zoom-off defect | Pre-scan bbox match or largest pose bbox | Largest detection | Largest YOLOv8x detection in each sample |
 | Zoom / info panel | Optional / yes when analysis exists | Optional / yes when analysis exists | Identity coordinates / yes when analysis exists | Fixed display crop, no skiing score |

@@ -12,7 +12,7 @@
 6. Create `output/YYYYMMDD_HHMMSS/`, copy input to `video.mp4`, construct a `mp4v` `VideoWriter` for original FPS and dimensions. **The writer's `isOpened()` status is not checked**.
 7. When enabled, construct a `ZoomTracker`; configure YOLO device/precision and load a person detector only when needed.
 8. When `target_mode=longest` and zoom is enabled, perform a full-video target-selection pre-scan; if it finds no confirmed tracks, switch active mode to `largest`.
-9. For normal `largest`, initialize Deep SORT for per-frame tracking. Begin the rendering loop.
+9. For normal video with active `largest` (including a failed `longest` pre-scan fallback), initialize Deep SORT for per-frame tracking **regardless of zoom state**. With `longest` and zoom disabled, no tracker is created. Begin the rendering loop.
 
 `high_precision=True` **only logs** a future interpolation feature. The frame iteration, sampling, output FPS and estimation behavior are unchanged ([#4](https://github.com/kmch4n/SkiSense/issues/4)).
 
@@ -38,14 +38,14 @@ This pre-scan runs **only if zoom is enabled**; the default `longest` flag does 
 
 For each successfully decoded frame (`current_frame` starts at 1):
 
-1. Run YOLOv8x detection and, only in active `largest` mode, update Deep SORT.
+1. Run YOLOv8x detection. If the active mode is `largest`, update Deep SORT on every frame, even with zoom disabled.
 2. Compute `timestamp_ms = int(current_frame * 1000 / fps)`. This is based on the **one-based** frame index, not media presentation timestamps.
 3. Call `pose_backend.estimate(frame, detection_bbox, timestamp_ms=...)` once **per detected person**. Retain only non-`None` `(entry, analysis)` pairs.
 4. With zoom **enabled**:
    - `longest` with a plan: get that frame's selected-track bbox; otherwise use `zoom_tracker.select_main_target(tracks, rects)`.
    - Match retained poses to the chosen bbox: exact `entry.detection_bbox` equality wins; otherwise highest bbox IoU **strictly greater than 0.05**; no match yields `None` analysis.
    - Use the selected entry's ROI-relative torso center converted to full-frame coordinates, if available; process target bbox through `zoom_tracker.process_bbox`.
-5. With zoom **disabled**: use the uncropped frame and identity transform. If poses exist, take the **first pose's analysis** but do **not** set `target_entry` or `target_bbox`. This causes the current bbox/skeleton overlay omission and inconsistent target selection ([#15](https://github.com/kmch4n/SkiSense/issues/15)).
+5. With zoom **disabled**: use the uncropped frame and identity transform. If poses exist, take the **first pose's analysis** but do **not** set `target_entry` or `target_bbox`. Any Deep SORT tracks computed in active `largest` mode are discarded for target selection/rendering; the tracking cost is still incurred. This causes the current bbox/skeleton overlay omission and inconsistent target selection ([#15](https://github.com/kmch4n/SkiSense/issues/15)).
 6. Draw selected target overlay and info panel if an analysis is available; update `latest_pose_analysis` to the **current frame's** analysis or `None`.
 7. If this frame has an analysis with score **strictly greater** than the best seen so far, retain a **copy of the annotated frame**.
 8. Call `out.write(output_frame)`; optionally show GUI and stop if user presses `q`.

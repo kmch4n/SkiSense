@@ -16,7 +16,7 @@ This document maps important behavioral claims to ownership, existing evidence a
 | VID-02 | Longest track chosen by frames seen, mean area and center distance | `main.py` | Code | Mock pre-scan/tracker tests |
 | VID-03 | Fast YOLO pose does full-frame inference; longest/zoom pre-scan remains | `main.py`, `yolo11_backend.py` | Code | [#9](https://github.com/kmch4n/SkiSense/issues/9) |
 | VID-04 | Fast SAM3D has no configured detector; full-frame fallback not reliable for multiple people | `sam3d_backend.py`, `main.py` | Code; upstream-dependent behavior unverified locally | [#16](https://github.com/kmch4n/SkiSense/issues/16) |
-| VID-05 | Normal zoom-off picks first score and skips target skeleton/bbox | `main.py` | Code; known deviation | [#15](https://github.com/kmch4n/SkiSense/issues/15) |
+| VID-05 | Normal zoom-off picks first score and skips target skeleton/bbox; active `largest` still updates Deep SORT but does not use its tracks | `main.py` | Code; known deviation | [#15](https://github.com/kmch4n/SkiSense/issues/15) |
 | IMG-01 | Largest-person still image, bbox if pose missing, identity coordinates | `image_processor.py` | Code | Multi-person, no-person, corrupt-file tests |
 | BACK-01 | YOLO11/26 COCO-17 normalization and ROI person association | `yolo11_backend.py`, `pose_topology.py` | Code; `tests/test_pose_comparison.py` includes ROI association | Real footage, edge cases |
 | BACK-02 | SAM3D 63 MHR landmarks, 3D estimates, synthetic visibility | `sam3d_backend.py`, `pose_topology.py` | Code; no current CUDA execution evidence | Gated model integration, occlusions |
@@ -27,7 +27,7 @@ This document maps important behavioral claims to ownership, existing evidence a
 | ZOOM-02 | Rendering transforms ROI→source→crop and uses per-topology edges | `main.py` | Code | Deterministic image/zoom tests |
 | CMP-01 | Samples same frames, largest detector target, sequential backends | `pose_comparison.py` | Code; `tests/test_pose_comparison.py` exists | End-to-end comparison footage |
 | CMP-02 | RTMW3D projected 2D comparison only; no score | `compare_rtmw3d.py` | Code; `tests/test_compare_rtmw3d.py` exists | 3D coordinate validation |
-| CMP-03 | Comparison JSON records metadata, selected bbox and per-model statuses | `pose_comparison.py` | Code; serialization unit tests exist | Schema snapshot tests |
+| CMP-03 | Comparison JSON records metadata, selected bbox, per-model statuses and estimate-call timing (including lazy RTMW3D setup when triggered) | `pose_comparison.py`, `compare_rtmw3d.py` | Code; serialization unit tests exist | Schema snapshot and timing-boundary tests |
 | OUT-01 | Video writer should fail visibly when encoding unavailable | `main.py` | **Gap:** no `isOpened()` or export verification | [#17](https://github.com/kmch4n/SkiSense/issues/17) |
 | OUT-02 | Still-image writer, input copy, resources and exit codes | `image_processor.py`, `main.py` | Code; partial cleanup/write checks | Add exception/write-failure tests |
 | DOC-01 | Relative Markdown links are checked automatically | `tests/test_docs_links.py`, `.github/workflows/static-checks.yml` | CI configured; no runtime imports | Anchor links and drift checks not yet covered |
