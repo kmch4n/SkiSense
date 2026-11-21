@@ -11,9 +11,9 @@ Explain the problem, the agreed outcome, observable differences and linked Issue
 - [ ] Updated `docs/spec/verification-matrix.md` for modified contracts.
 - [ ] Documented changes to API/CLI/config, model data shape, coordinate units, output schema, scoring comparability and backward compatibility (or stated none).
 
-**Specification sections changed first:**  
-**Affected contract IDs:**  
-**Behavioral compatibility / migration:**  
+**Specification sections changed first:**
+**Affected contract IDs:**
+**Behavioral compatibility / migration:**
 
 ## Changes
 
@@ -26,9 +26,9 @@ Describe the implementation, documentation, tests and why the diff is minimal an
 - [ ] Broader unit tests: `python -m unittest discover -s tests -v` (if dependencies available)
 - [ ] Relevant CPU/mock regression and real image/video/model tests (state exact coverage, if applicable)
 
-**Executed commands, environment and exact results:**  
-**Tests NOT run and why:**  
-**Unverified behavior / hardware / model quality:**  
+**Executed commands, environment and exact results:**
+**Tests NOT run and why:**
+**Unverified behavior / hardware / model quality:**
 
 Do not state that tests passed unless actually executed. Static checks do not establish runtime inference or domain validity.
 

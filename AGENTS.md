@@ -136,19 +136,25 @@ Runtime; see `docs/pose_comparison.md`.
 
 ### Processing Pipeline
 
-The video processing follows a strict 3-step pipeline per frame:
+Normal video processing follows three main stages (see
+`docs/spec/video-processing.md` for mode-specific behavior):
 
-1. **Detection & Tracking**: YOLOv8x detects persons; Deep SORT assigns
-   persistent track IDs.
+1. **Detection & Tracking**: YOLOv8x detects persons per frame. Deep SORT
+   runs in a separate pre-scan for `longest` with zoom enabled, or per
+   frame for active `largest` regardless of zoom. With zoom disabled,
+   `largest` still incurs tracking work but its tracks are unused for
+   target selection; `longest` performs no tracking. Fast mode uses
+   full-frame backend inference, with only the conditional pre-scan.
 2. **Pose Estimation**: Each detected person's bbox is forwarded to the
    selected backend. SAM 3D Body returns MHR keypoints (3D +
    2D-projected) plus the full body mesh; YOLO26/YOLO11-Pose return 2D
    COCO-17 keypoints. `analyze_ski_pose()` reads the backend's
    `PoseTopology` and evaluates knee/hip/ankle in 3D when `is_3d` is
    set, otherwise in image space; shoulder tilt is always 2D.
-3. **Rendering**: ZoomTracker applies zoom; landmarks/bboxes are
-   drawn in zoom-transformed coordinates using the 2D keypoints; the
-   info panel is overlaid.
+3. **Rendering**: When enabled, ZoomTracker applies zoom. The selected
+   landmarks/bbox are drawn in output coordinates and the info panel is
+   overlaid. Normal video with zoom disabled omits the target skeleton
+   and bbox (Issue #15).
 
 All coordinate transforms must go through `transform_point_to_zoom()`
 when zoom is enabled. If overlays drift, inspect this function first.

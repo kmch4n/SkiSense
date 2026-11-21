@@ -46,9 +46,15 @@ Open `output/comparison_YYYYMMDD_HHMMSS/index.html` or the individual
 package versions, per-model status, inference time, projected 2D landmarks,
 and available raw 3D joints. The `visibility` field is a model keypoint score
 except for SAM 3D Body, which uses a placeholder value of 1.0 for the joints
-it exposes; see `visibility_semantics` in the JSON. The first frame's time
-can include model initialization, checkpoint downloads, and GPU warmup;
-compare later frames for a rough steady-state runtime. The generated output
+it exposes; see `visibility_semantics` in the JSON. The recorded time covers
+only `backend.estimate(frame, bbox)`, excluding backend construction, shared
+person detection, rendering and export. YOLO and SAM3D initialization and
+checkpoint acquisition performed during construction are outside the timer.
+RTMW3D initializes its model lazily on the first valid estimate, so its first
+sample can include initialization and any downloads triggered there. Warmup
+and other lazy setup may affect any backend; later frames provide only a
+rough indication of steady-state runtime, not a controlled benchmark. See the
+[comparison timing contract](spec/model-comparison.md). The generated output
 stays ignored by Git.
 
 If optional RTMW3D dependencies are absent or SAM 3D Body weights are not
