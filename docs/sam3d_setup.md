@@ -1,6 +1,6 @@
 # SAM 3D Body setup (optional CUDA backend)
 
-SkiSense's default `yolo26` backend does **not** need these steps. The `sam3d` backend uses Meta's SAM 3D Body source and gated Hugging Face weights. This guide reflects the code on `main` at `0fa4216f`; a real CUDA installation has **not** been exercised as part of the documentation audit.
+SkiSense's default `yolo26` backend does **not** need these steps. The `sam3d` backend uses Meta's SAM 3D Body source and gated Hugging Face weights. This guide describes the source-inspected integration at `main@f95d68c`; a real CUDA installation has **not** been exercised as part of the documentation audit.
 
 ## Prerequisites
 
